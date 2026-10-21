@@ -289,7 +289,8 @@ uvx --from git+https://github.com/alefra93/MCPSonar.git mcpsonar scan https://ex
 pipx install git+https://github.com/alefra93/MCPSonar.git
 ```
 
-From v0.8.0 every GitHub Release also carries the wheel: `uvx --from <wheel URL> mcpsonar …`.
+Every GitHub Release (from v0.8.0) also carries the wheel, which needs no git:
+`uvx --from https://github.com/alefra93/MCPSonar/releases/download/v0.8.0/mcpsonar-0.8.0-py3-none-any.whl mcpsonar …`.
 Tab completion: `mcpsonar completion bash|zsh|fish|powershell` (see
 [docs/cli.md](https://github.com/alefra93/MCPSonar/blob/main/docs/cli.md#shell-completion)).
 
