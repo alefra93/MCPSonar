@@ -3,6 +3,13 @@
 All notable changes to MCPSonar. Versions follow [SemVer](https://semver.org/); each release
 is a Git tag `vX.Y.Z`, which is also how the GitHub Action is pinned.
 
+## [Unreleased]
+
+### Fixed
+- History is ordered deterministically when two checks share a timestamp (coarse clocks
+  on Windows): insertion order wins. A test depending on it failed intermittently on the
+  Windows CI runner.
+
 ## [0.8.0] — 2026-10-21
 
 ### Observability

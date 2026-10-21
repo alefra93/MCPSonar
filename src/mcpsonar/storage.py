@@ -430,13 +430,13 @@ class Storage:
         if since is not None:
             cur = await self._read.execute(
                 "SELECT * FROM (SELECT * FROM checks WHERE server_id = ? AND checked_at >= ? "
-                "ORDER BY checked_at DESC LIMIT ?) ORDER BY checked_at ASC",
+                "ORDER BY checked_at DESC, id DESC LIMIT ?) ORDER BY checked_at ASC, id ASC",
                 (server_id, since.isoformat(), limit),
             )
         else:
             cur = await self._read.execute(
                 "SELECT * FROM (SELECT * FROM checks WHERE server_id = ? "
-                "ORDER BY checked_at DESC LIMIT ?) ORDER BY checked_at ASC",
+                "ORDER BY checked_at DESC, id DESC LIMIT ?) ORDER BY checked_at ASC, id ASC",
                 (server_id, limit),
             )
         rows = await cur.fetchall()

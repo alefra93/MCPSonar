@@ -160,3 +160,17 @@ async def test_read_connection_cannot_write(tmp_path):
             await s._read.execute("DELETE FROM settings")
     finally:
         await s.close()
+
+
+async def test_history_order_is_stable_for_equal_timestamps(tmp_path):
+    # Windows clocks tick coarsely: two checks can share a timestamp. Insertion order wins.
+    s = await Storage.open(tmp_path / "m.db")
+    try:
+        at = datetime(2026, 1, 1, tzinfo=UTC)
+        for latency in (1.0, 2.0, 3.0):
+            await s.record_check(CheckEvent(server_id="s", status="up", latency_ms=latency,
+                                            checked_at=at))
+        assert [e.latency_ms for e in await s.get_history("s")] == [1.0, 2.0, 3.0]
+        assert [e.latency_ms for e in await s.get_history("s", limit=2)] == [2.0, 3.0]
+    finally:
+        await s.close()
