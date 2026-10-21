@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Security",
 ]
 dependencies = [
-    "mcp>=1.28,<2",  # 2.x is a breaking rewrite (httpx2, snake_case types) — not yet supported
+    "mcp>=1.28,<3",  # 2.x is a breaking rewrite (httpx2, snake_case types) — not yet supported
     "httpx>=0.27",
     "pydantic>=2.6",
     "pyyaml>=6.0",
