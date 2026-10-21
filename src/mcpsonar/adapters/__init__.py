@@ -1,13 +1,13 @@
 """Output adapters and the dispatcher that fans check events out to them.
 
 Push adapters (Uptime Kuma, generic webhook) implement :class:`BaseAdapter` and share one
-``httpx.AsyncClient`` owned by :class:`AdapterDispatcher`. The Prometheus exporter is not a
+``httpx2.AsyncClient`` owned by :class:`AdapterDispatcher`. The Prometheus exporter is not a
 push adapter — it is scraped via ``/metrics`` and reads the StateStore directly.
 """
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 
 from ..models import GenericWebhook, ServerConfig, UptimeKumaWebhook
 from .base import BaseAdapter
@@ -25,7 +25,7 @@ __all__ = [
 ]
 
 
-def build_push_adapters(cfg: ServerConfig, client: httpx.AsyncClient) -> list[BaseAdapter]:
+def build_push_adapters(cfg: ServerConfig, client: httpx2.AsyncClient) -> list[BaseAdapter]:
     """Construct the push adapters declared in a server's webhook config. The scheduler owns
     the shared client and dispatches events to these per server."""
     adapters: list[BaseAdapter] = []

@@ -8,7 +8,7 @@ updated, or removed via the API — no restart. Each iteration:
 2. updates the in-memory StateStore (current state for the dashboard),
 3. fans it out to that server's push adapters.
 
-Owns the shared ``httpx.AsyncClient`` used by adapters, so adapter lifecycle follows the
+Owns the shared ``httpx2.AsyncClient`` used by adapters, so adapter lifecycle follows the
 server lifecycle.
 """
 
@@ -19,7 +19,7 @@ import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2
 
 from .adapters import build_push_adapters
 from .adapters.base import BaseAdapter
@@ -46,7 +46,7 @@ class Scheduler:
         self._storage = storage
         self._store = store
         # Webhook/Kuma deliveries obey the same outbound policy as checks.
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             timeout=http_timeout, transport=policy_transport(), max_redirects=5
         )
         self._tasks: dict[str, asyncio.Task] = {}
@@ -165,7 +165,7 @@ class Scheduler:
             try:
                 await adapter.send(event)
             except Exception as exc:
-                # httpx errors quote the URL, and webhook URLs embed their token.
+                # httpx2 errors quote the URL, and webhook URLs embed their token.
                 logger.warning(
                     "adapter %s failed for %s: %s", adapter.name, server_id,
                     scrub(str(exc), secrets),

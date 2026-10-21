@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcpsonar"
-version = "0.6.0"
+version = "0.7.0"
 description = "Uptime monitoring, rug-pull detection and anomaly detection for MCP servers"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -22,8 +22,10 @@ classifiers = [
     "Topic :: Security",
 ]
 dependencies = [
-    "mcp>=1.28,<2",  # 2.x is a breaking rewrite (httpx2, snake_case types) — not yet supported
-    "httpx>=0.27",
+    # 2.x speaks every MCP revision: 2025-era servers through the initialize handshake,
+    # 2026-07-28 servers through server/discover (see docs/adr/0001-mcp-sdk-2.md).
+    "mcp>=2.3,<3",
+    "httpx2>=2.15",  # the HTTP stack mcp 2.x is built on; one stack, one outbound policy
     "pydantic>=2.6",
     "pyyaml>=6.0",
     "fastapi>=0.110",
@@ -32,8 +34,6 @@ dependencies = [
     # Not used directly (mcp's OAuth client pulls it in): a floor so installs never resolve
     # to versions with known advisories (PYSEC-2026-4140..4183, found by pip-audit in CI).
     "pyjwt>=2.15",
-    # Not used directly (httpx's CA bundle): GHSA-6q48-6c7w-9gw2 is fixed in 2026.10.19.
-    "certifi>=2026.10.19",
 ]
 
 [project.optional-dependencies]

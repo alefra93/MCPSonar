@@ -25,7 +25,14 @@ from pathlib import Path
 
 import aiosqlite
 
-from .auth import hash_password, needs_rehash, new_session_token, token_digest, verify_password
+from .auth import (
+    hash_password,
+    needs_rehash,
+    new_api_token,
+    new_session_token,
+    token_digest,
+    verify_password,
+)
 from .models import Anomaly, CheckEvent, CheckStatus, MonitoredServer, ServerConfig
 from .tooldefs import ToolChange
 
@@ -96,6 +103,16 @@ CREATE TABLE IF NOT EXISTS sessions (
     username   TEXT NOT NULL,
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    token_hash   TEXT UNIQUE NOT NULL,
+    scope        TEXT NOT NULL,
+    created_by   TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    expires_at   REAL,
+    last_used_at REAL
 );
 """
 
@@ -471,3 +488,62 @@ class Storage:
             "DELETE FROM sessions WHERE token_hash = ?", (token_digest(token),)
         )
         await self._conn.commit()
+
+    # ---- API tokens (CLI / automation) ------------------------------------- #
+    @staticmethod
+    def _token_row(r: aiosqlite.Row) -> dict:
+        return {
+            "id": r["id"],
+            "name": r["name"],
+            "scope": r["scope"],
+            "created_by": r["created_by"],
+            "created_at": r["created_at"],
+            "expires_at": r["expires_at"],
+            "last_used_at": r["last_used_at"],
+        }
+
+    async def create_api_token(
+        self, name: str, scope: str, created_by: str, ttl_s: float | None = None
+    ) -> tuple[dict, str]:
+        """Create a token; returns ``(metadata, token)``. The token itself is never stored
+        (only its SHA-256), so this is the only time it can be shown."""
+        token = new_api_token()
+        now = time.time()
+        token_id = _new_id()
+        await self._conn.execute(
+            "INSERT INTO api_tokens (id, name, token_hash, scope, created_by, created_at, "
+            "expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (token_id, name, token_digest(token), scope, created_by, now,
+             now + ttl_s if ttl_s else None),
+        )
+        await self._conn.commit()
+        cur = await self._conn.execute("SELECT * FROM api_tokens WHERE id = ?", (token_id,))
+        return self._token_row(await cur.fetchone()), token
+
+    async def list_api_tokens(self) -> list[dict]:
+        cur = await self._conn.execute("SELECT * FROM api_tokens ORDER BY created_at")
+        return [self._token_row(r) for r in await cur.fetchall()]
+
+    async def revoke_api_token(self, token_id: str) -> bool:
+        cur = await self._conn.execute("DELETE FROM api_tokens WHERE id = ?", (token_id,))
+        await self._conn.commit()
+        return cur.rowcount > 0
+
+    async def get_api_token(self, token: str) -> dict | None:
+        """The live token's metadata, or None (unknown, revoked or expired). Records use at
+        most once a minute, so polling clients don't turn every read into a write."""
+        now = time.time()
+        cur = await self._conn.execute(
+            "SELECT * FROM api_tokens WHERE token_hash = ? "
+            "AND (expires_at IS NULL OR expires_at > ?)",
+            (token_digest(token), now),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        if row["last_used_at"] is None or now - row["last_used_at"] > 60:
+            await self._conn.execute(
+                "UPDATE api_tokens SET last_used_at = ? WHERE id = ?", (now, row["id"])
+            )
+            await self._conn.commit()
+        return self._token_row(row)

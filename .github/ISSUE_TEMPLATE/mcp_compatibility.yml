@@ -1,0 +1,44 @@
+name: MCP compatibility problem
+description: A server that works with MCP clients but MCPSonar reports wrongly (down, degraded, missing tools)
+labels: [compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove credentials (tokens, API keys, keyed URLs) from everything you paste.
+        `mcpsonar tools <url> --json` and `mcpsonar doctor --json` output help a lot.
+  - type: input
+    id: server
+    attributes:
+      label: Server (name, version, link if public)
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options: [Streamable HTTP, SSE (legacy), stdio]
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Protocol revision the server uses (if known)
+      placeholder: e.g. 2025-11-25, 2026-07-28
+  - type: textarea
+    id: observed
+    attributes:
+      label: What MCPSonar reports vs. what a client sees
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output of `mcpsonar tools … --json` / the check detail
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Output of `mcpsonar version`
+    validations:
+      required: true

@@ -22,6 +22,18 @@ output or shell history.
 | | `MCPSONAR_METRICS_TOKEN` | — (public) | When set, `/metrics` requires `Authorization: Bearer <token>`. |
 | | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | (uvicorn) proxies whose `X-Forwarded-For` / `-Proto` are trusted. See *Reverse proxy*. |
 
+### CLI client (remote mode)
+
+| Environment | Default | What it does |
+|---|---|---|
+| `MCPSONAR_URL` | `http://127.0.0.1:8675` | The instance `status`, `servers`, `check`, `diff` and `history` talk to (`--url` overrides). |
+| `MCPSONAR_TOKEN` | — | API token from the dashboard (**API tokens**). *read* tokens: GET only. *write* tokens: also check and change servers. Not needed with `--no-auth`. |
+
+API tokens are stored as SHA-256 hashes and shown once. They can expire, are revoked from
+the dashboard, and can't be used to create or list tokens. Prefer *read* tokens for
+dashboards, scripts and CI; give *write* only to automation that must trigger checks or
+change servers.
+
 ### Outbound connection policy
 
 Applies to MCP checks (HTTP and SSE, including every redirect hop) and to webhook / Uptime
@@ -34,6 +46,10 @@ Kuma deliveries. Enforced when the TCP connection is opened, against the resolve
 | `MCPSONAR_BLOCK_PRIVATE_NETWORKS=1` | off | Also block loopback, RFC 1918, ULA and CGNAT — for instances that only watch internet servers. |
 | `MCPSONAR_OUTBOUND_ALLOW` | — | CIDRs always allowed (the only way to reach a metadata address on purpose). |
 | `MCPSONAR_OUTBOUND_DENY` | — | CIDRs always blocked (wins over everything). |
+
+**TLS trust:** HTTPS is verified with the operating-system trust store on Windows and
+macOS, so enterprise root CAs installed there are honored. On Linux and in the container the
+system CA bundle is used. `SSL_CERT_FILE` / `SSL_CERT_DIR` override both.
 
 Private networks are allowed by default on purpose: watching the MCP servers on your own
 network is a primary use case. Requests sent through `HTTP(S)_PROXY` connect to the proxy,

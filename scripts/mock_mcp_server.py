@@ -18,11 +18,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 
-def build_server(host: str, port: int) -> FastMCP:
-    server = FastMCP("mock-mcp-server", host=host, port=port)
+def build_server() -> MCPServer:
+    # An mcp 2.x server is dual-era: it answers both `server/discover` (2026-07-28) and the
+    # `initialize` handshake (2025-11-25 and earlier).
+    server = MCPServer("mock-mcp-server")
 
     @server.tool()
     def ping() -> str:
@@ -53,7 +55,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    server = build_server(args.host, args.port)
+    server = build_server()
     if args.transport == "stdio":
         # stdout is the MCP channel here, so log to stderr only.
         print("mock MCP server: stdio", file=sys.stderr)
@@ -65,7 +67,7 @@ def main() -> None:
         f"mock MCP server: http://{args.host}:{args.port}{path}  (transport={args.transport})",
         file=sys.stderr,
     )
-    server.run(transport=args.transport)
+    server.run(transport=args.transport, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

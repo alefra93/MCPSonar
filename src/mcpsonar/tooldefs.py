@@ -17,7 +17,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from mcp.types import Tool
+from mcp_types import Tool
+from pydantic import ValidationError
 
 #: The parts of a tool definition that are pinned. ``_meta``/``icons``/``execution`` are left
 #: out on purpose: they are presentation/runtime hints that may legitimately vary per call.
@@ -92,6 +93,20 @@ def diff_tools(
             ]
             changes.append(ToolChange("changed", name, fields=fields, before=old, after=new))
     return changes
+
+
+def renormalize(definition: dict[str, Any]) -> dict[str, Any]:
+    """A *stored* definition (baseline snapshot, lockfile) passed through the current SDK's
+    model, so it compares like a fresh listing would.
+
+    Needed across SDK upgrades: mcp 2.x silently drops unknown keys inside ``annotations``
+    that 1.x kept, so a baseline pinned under 1.x would otherwise look "changed" for those
+    tools — a false rug-pull alert. Definitions the model rejects are compared as stored.
+    """
+    try:
+        return normalize_tool(Tool.model_validate(definition))
+    except ValidationError:
+        return definition
 
 
 def index_tools(tools: list[Tool] | list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

@@ -22,11 +22,27 @@ rules they were built against.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Protocol
 
-from mcp.types import InitializeResult, Tool
+from mcp_types import Implementation, ServerCapabilities, Tool
 
 
-def run_minimal_common_validation(init: InitializeResult, tools: list[Tool]) -> list[str]:
+class ServerHandshake(Protocol):
+    """What validators need to know about a server, whichever protocol era it speaks:
+    from ``initialize`` (handshake era) or ``server/discover`` (2026-07-28 and later).
+    Implemented by :class:`mcpsonar.check_engine.Handshake`."""
+
+    @property
+    def protocol_version(self) -> str | None: ...
+
+    @property
+    def server_info(self) -> Implementation | None: ...
+
+    @property
+    def capabilities(self) -> ServerCapabilities | None: ...
+
+
+def run_minimal_common_validation(server: ServerHandshake, tools: list[Tool]) -> list[str]:
     """Rules that hold for *all* MCP spec versions. Returns a list of issue strings.
 
     Keep this deliberately conservative: anything here is asserted against servers whose
@@ -34,9 +50,9 @@ def run_minimal_common_validation(init: InitializeResult, tools: list[Tool]) -> 
     unambiguously wrong regardless of version.
     """
     issues: list[str] = []
-    if not init.protocolVersion:
+    if not server.protocol_version:
         issues.append("server declared an empty protocolVersion")
-    if init.serverInfo is None or not init.serverInfo.name:
+    if server.server_info is None or not server.server_info.name:
         issues.append("server did not report serverInfo.name")
     seen: set[str] = set()
     for tool in tools:
@@ -61,7 +77,7 @@ class BaseValidator(ABC):
     spec_version: str
 
     @abstractmethod
-    def validate(self, init: InitializeResult, tools: list[Tool]) -> list[str]:
+    def validate(self, server: ServerHandshake, tools: list[Tool]) -> list[str]:
         """Return version-specific issues (empty list == clean).
 
         The engine has already run :func:`run_minimal_common_validation`; do not repeat it.

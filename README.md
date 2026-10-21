@@ -143,7 +143,7 @@ Exit codes: `0` clean · `1` findings ≥ `--fail-on` (default `high`) or lockfi
 As a **GitHub Action**, pinned to a release:
 
 ```yaml
-- uses: alefra93/MCPSonar@v0.6.0
+- uses: alefra93/MCPSonar@v0.7.0
   with:
     target: https://mcp.example.com/mcp
     lock: mcp-tools.lock.json
@@ -157,7 +157,7 @@ A security check shouldn't change under you any more than the servers it watches
 updates:
 
 ```yaml
-- uses: alefra93/MCPSonar@<full-commit-sha>  # v0.6.0
+- uses: alefra93/MCPSonar@<full-commit-sha>  # v0.7.0
 ```
 
 ```yaml
@@ -250,8 +250,16 @@ No config file is required; servers are managed from the UI.
 | Command | Purpose |
 |---|---|
 | `mcpsonar run` | The monitor: dashboard, API, `/metrics`, scheduled checks. |
-| `mcpsonar scan <url> \| --stdio "cmd"` | One-shot security scan (`--lock`, `--update-lock`, `--fail-on`, `--json`, `-H`, `-e`). |
+| `mcpsonar scan <url> \| --stdio "cmd"` | One-shot security scan for CI (`--lock`, `--update-lock`, `--fail-on`, `--json`, `-H`, `-e`). |
+| `mcpsonar tools <url>` | Every tool a server exposes, with risk indicators (`--detail`, `--json`). |
+| `mcpsonar risks <url>` | Each finding explained: evidence and what to review (`--severity`, `--fail-on`). |
+| `mcpsonar config validate\|show\|export FILE` | Check a YAML config; show/export it with credentials masked. |
+| `mcpsonar doctor` | Read-only diagnosis of the installation and deployment. |
 | `mcpsonar demo` | Dashboard against four scripted demo servers (`--interval`, `--no-browser`). |
+
+All commands take `--format json`, honor `NO_COLOR`, and exit 0 (ok), 1 (problem found) or 2
+(could not run). Full reference, including local and remote mode:
+[docs/cli.md](docs/cli.md).
 
 `mcpsonar run` options:
 

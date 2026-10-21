@@ -71,7 +71,7 @@ def _cfg(tools: list[str] | None = None, **kw) -> ServerConfig:
 async def test_up_no_tools(mock_server):
     evt = await check_server("mock", _cfg())
     assert evt.status.value == "up"
-    assert evt.spec_version == "2025-11-25"
+    assert evt.spec_version == "2026-07-28"  # mcp 2.x servers speak the modern era
     assert evt.spec_version_supported is True
     assert evt.tools_checked == 0
     assert evt.tools_available == 3  # mock exposes ping, echo, boom
@@ -133,7 +133,7 @@ async def test_stdio_transport_against_mock():
     )
     evt = await check_server("mock-stdio", cfg)
     assert evt.status.value == "up"
-    assert evt.spec_version == "2025-11-25"
+    assert evt.spec_version == "2026-07-28"  # mcp 2.x servers speak the modern era
     assert evt.tools_checked == 1 and evt.tools_failed == 0
 
 
@@ -177,9 +177,10 @@ def test_minimal_common_validation_flags_bad_handshake():
     class _Info:
         name = ""
 
-    class _Init:
-        protocolVersion = ""
-        serverInfo = _Info()
+    class _Init:  # anything shaped like check_engine.Handshake
+        protocol_version = ""
+        server_info = _Info()
+        capabilities = None
 
     issues = run_minimal_common_validation(_Init(), [])
     assert any("protocolVersion" in i for i in issues)

@@ -3,6 +3,62 @@
 All notable changes to MCPSonar. Versions follow [SemVer](https://semver.org/); each release
 is a Git tag `vX.Y.Z`, which is also how the GitHub Action is pinned.
 
+## [0.7.0] — 2026-10-21
+
+### Added
+- CLI commands `tools`, `risks`, `config validate|show|export`, `doctor` and `version`
+  (plus `--version`). They work without a running instance, against a URL, `--stdio` or a
+  server name from a YAML file. Every command supports `--format json`, `NO_COLOR` /
+  `--no-color`, results on stdout and diagnostics on stderr, and stable exit codes (0/1/2).
+  See [docs/cli.md](docs/cli.md).
+- A rule registry (`lint.RULES`): every finding's rule ID now has a title, an explanation
+  and a remediation.
+- **API tokens** for the CLI and automation: created and revoked in the dashboard (new **API
+  tokens** dialog). They are scoped *read* (GET only) or *write*, can expire, are stored
+  hashed and shown once, and can't manage tokens. They are sent as
+  `Authorization: Bearer mcps_…`.
+- Remote-mode CLI commands that work against a running instance (`MCPSONAR_URL`,
+  `MCPSONAR_TOKEN`), through the same API as the dashboard and never through its database:
+  - `status`;
+  - `servers list|show`;
+  - `check NAME|--all`, run by the instance;
+  - `diff NAME`: changes marked pending, SUSPICIOUS or APPROVED; never approves anything;
+  - `history NAME --last 24h`: uptime, latency percentiles, baseline, shift, incidents;
+  - `servers add|edit|pause|resume|remove`. `--header-from-env` keeps credentials out of
+    shell history. `edit` changes only the given options and keeps credentials and probe
+    arguments. `remove` asks for confirmation on a terminal and needs `--yes` otherwise.
+- `GET /api/servers/{id}/tool-changes` includes the lint `findings` of each new definition.
+
+### Protocol
+- **MCP Python SDK 2.x (`mcp>=2.3,<3`) and spec revision 2026-07-28.** One client speaks both
+  protocol eras: `server/discover` for 2026-07-28 servers, falling back to `initialize` for
+  2024-11-05 … 2025-11-25 servers. Servers that only speak 2026-07-28 used to be reported
+  *down*. 5 of the 24 public servers in `examples/popular-servers.yaml` already speak it.
+- New validator for 2026-07-28. `spec_version` reports the negotiated revision.
+- Unchanged:
+  - **Tool fingerprints:** identical to mcp 1.x, with golden values tested and 42/42 tools
+    checked on live servers. Stored baselines and lockfiles are re-normalized, so annotation
+    keys 2.x no longer represents don't count as changes.
+  - **401/403/429 handling:** *auth required*, *credentials rejected*, *rate limited* +
+    `Retry-After`.
+  - **Latency continuity:** HTTP times only the RPC that succeeded; stdio includes process
+    startup, as before. A 401/403/429 on the discover probe ends negotiation at once, so
+    protected servers cost one request per check, as before.
+- `httpx` is replaced by `httpx2`, the stack mcp 2.x uses, so the outbound policy covers one HTTP
+  stack. On Windows and macOS, TLS uses the operating-system trust store, so corporate CAs work
+  without extra configuration.
+- "down" details now include the HTTP status when there was one (e.g. `(HTTP 503)`).
+
+### Changed
+- The dashboard's Tools view, `mcpsonar scan` and the new commands share one inspection
+  service. As a result `scan` now has an overall time budget too.
+- One-shot commands log only warnings; `run` and `demo` are unchanged.
+- `scan` also accepts `--format json`.
+
+### Fixed
+- `--stdio` with quoted paths on Windows (e.g. `"C:\Program Files\nodejs\npx.cmd"`): the
+  quotes were kept as part of the path, so the command could not be found.
+
 ## [0.6.0] — 2026-10-21
 
 Security hardening release. Details, evidence and tests for each item:

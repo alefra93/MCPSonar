@@ -9,7 +9,7 @@ make mcpsonar launch an arbitrary stdio command.
 from __future__ import annotations
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from mcpsonar.cli import default_allowed_hosts
 from mcpsonar.dashboard import create_app

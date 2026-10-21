@@ -1,14 +1,14 @@
 """Tests for the config loader (YAML on/off footgun) and the storage-backed dashboard app.
 
 The dashboard routes are async and read from an aiosqlite Storage, so these drive the app
-with httpx's ASGITransport inside the test's own event loop (keeps the DB connection and the
+with httpx2's ASGITransport inside the test's own event loop (keeps the DB connection and the
 request handling on one loop).
 """
 
 from __future__ import annotations
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from mcpsonar.dashboard import create_app
 from mcpsonar.loader import ConfigError, load_config

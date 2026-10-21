@@ -197,12 +197,15 @@ Commit `fix(security): outbound connection policy…`
 
 ## C. Theoretical threats, accepted risks and limitations
 
-**T-01 · High (future compatibility) · PLANNED**
+**T-01 · High (future compatibility) · IMPLEMENTED, TESTED, VERIFIED in v0.7.0**
 MCP spec **2026-07-28** removes the `initialize` handshake and `ping`, adds a mandatory
 `server/discover`, and deprecates HTTP+SSE (per its changelog). `mcp` 2.x (2.0 released
 2026-07-28; 2.3.0 is current) implements it; MCPSonar pins `mcp<2`. Servers that speak only
 the new revision will appear *down*. A spike on SDK 2.x is the top v0.7/v1.0 protocol item
 (see the roadmap). Not attempted here: it is a major migration that needs its own evidence.
+Resolved by moving to mcp 2.x: one client negotiates both eras. 24/24 live servers were
+classified identically, with 42/42 tool fingerprints unchanged, and 5 of them already speak
+2026-07-28. See ADR 0001, "Implementation notes".
 
 **T-02 · Medium · ACCEPTED (documented)**
 stdio servers are code execution by design. Mitigations: no shell, minimal environment,

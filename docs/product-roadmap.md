@@ -11,7 +11,7 @@ Effort is in focused engineer-days (one maintainer), and is approximate.
 
 ---
 
-## v0.6.0 — Security hardening *(implemented on `feat/mcpsonar-web-app`, not released)*
+## v0.6.0 — Security hardening *(released 2026-10-21)*
 
 **Features** (details in [engineering-audit.md](engineering-audit.md)):
 - **Browser-facing hardening:**
@@ -37,12 +37,13 @@ Effort is in focused engineer-days (one maintainer), and is approximate.
   - non-root container with a HEALTHCHECK;
   - CI on Windows and macOS, `pip-audit`, a Docker smoke job, Dependabot.
 
-**Remaining before tagging:**
-- **Version and changelog:**
-  - bump `pyproject` and the compose image tags to `0.6.0`;
-  - date the changelog entry.
-- **GitHub settings:** turn on private vulnerability reporting (referenced by `SECURITY.md`).
-- **Real-environment check:** run the 24/7 watch deployment on the new image for 48 h; check for false *down* states caused by the new timeouts.
+**How it was released (2026-10-21):**
+- **CI:** PR #3 was green on all 7 checks (Linux 3.11–3.13, Windows, macOS, pip-audit, Docker).
+- **GitHub settings:** private vulnerability reporting enabled and repository topics set.
+- **Real-environment check:** the 24/7 watch ran overnight on the 0.6.0 image (13 h 40 min,
+  3,934 checks, 99.5% up). Every *down* was a remote timeout, a dropped connection or an HTTP 502.
+  Nothing was blocked by the new outbound policy, and no server failed repeatedly.
+- **Release:** merged and tagged `v0.6.0`; `release.yml` published the GitHub Release.
 
 **Acceptance criteria:**
 - All tests pass on 3.11–3.13, Linux, Windows and macOS.
@@ -56,134 +57,167 @@ Effort is in focused engineer-days (one maintainer), and is approximate.
 
 ---
 
-## v0.7.0 — Deep observability
+## Product rule: three interfaces, one engine
+
+The CLI, the dashboard/REST API and CI/CD (`scan` + the GitHub Action) are interfaces over
+**one** application layer (`mcpsonar/services.py`) and engine. A health classification, a
+risk severity, a fingerprint, an anomaly, an approval or a config validation exists once;
+interfaces only parse inputs and render outputs. Every milestone below is checked against
+this rule, and consistency tests guard it (the first one already exists: the dashboard's
+Tools view and `mcpsonar risks` must report the same findings). See [cli.md](cli.md).
+
+> **Reconciliation note (2026-10-20).** This plan merges the CLI expansion with the earlier
+> observability roadmap. Compared with the first version of this document:
+> - **v0.7** becomes *CLI foundation + protocol currency*. It takes in the MCP SDK 2.x work
+>   recommended by [ADR 0001](adr/0001-mcp-sdk-2.md), on branch `spike/mcp-sdk-2-adr`.
+> - **Deep observability** (per-tool latency, response drift, anomaly quality) moves to v0.8.
+> - **Notifications and the conference demo** move to v0.9.
+>
+> The order is a proposal awaiting the maintainer's confirmation.
+
+---
+
+## v0.7.0 — CLI foundation and protocol currency
 
 **Features:**
+- **Shared application layer.** *IMPLEMENTED (v0.7.0):*
+  - `services.inspect_server` is used by the dashboard, `scan` and the CLI;
+  - the output layer and exit-code contract (`output.py`);
+  - a rule registry (`lint.RULES`).
+- **Local-mode commands.** *IMPLEMENTED and tested (v0.7.0):*
+  - `tools`, `risks`, `config validate|show|export`, `doctor`, `version`;
+  - `--format json` everywhere, `NO_COLOR`, stdout/stderr separation.
+- **Remote mode.** *IMPLEMENTED and tested (v0.7.0):*
+  - *API tokens:* created in the dashboard, stored hashed, scoped *read* or *write*,
+    expiring and revocable. Used as `Authorization: Bearer` by the CLI, without touching
+    the v0.6 CSRF and session model.
+  - *Client config:* `MCPSONAR_URL` + `MCPSONAR_TOKEN`.
+  - *Commands:* `status`, `servers list|show|add|edit|pause|resume|remove`, `check`, `diff`,
+    `history`.
+- **Remote-mode commands** (all through the instance's API, never its database):
+  - `status`;
+  - `servers list|add|show|edit|remove|pause|resume`, with confirmation on a TTY and `--yes`
+    otherwise;
+  - `check NAME|--all`, run by the instance;
+  - `diff NAME`, which shows changes and never approves;
+  - `history NAME --last 24h`, bounded by default.
+- **Service extraction:** move the remaining shared operations from `api.py` into services
+  (server CRUD with secret restore, tool-change listing and approval, history and insights).
+  The API and the CLI then call the same functions.
+- **MCP protocol currency.** *IMPLEMENTED, TESTED and VERIFIED (v0.7.0):*
+  - ADR 0001 implemented: mcp 2.x / spec 2026-07-28, with 2025-era servers still supported,
+    behind `check_engine` and `services`;
+  - fingerprints stable: 42/42 live tools identical, golden-value tests;
+  - 24/24 live servers classified as before.
+
+**Dependencies:**
+- v0.6 released.
+- The API-token design reviewed before it is implemented (it is security-sensitive).
+
+**Acceptance criteria:**
+- **Consistency:** each remote command has a consistency test against the API (same
+  numbers as the dashboard).
+- **Exit codes:** documented, and `scan`'s 0/1/2 contract unchanged.
+- **CLI safety:** no command prints a credential, and no command writes to the database.
+- **Protocol:** the SDK migration passes the protocol-edge suite, plus a fixture server per
+  spec revision.
+
+| Risk | Effort | Release blockers |
+|---|---|---|
+| Medium–High (auth surface; SDK major version) | 15–20 days (about 4 already done) | Token design review; ADR implemented; Windows, macOS and Linux CI green |
+
+---
+
+## v0.8.0 — Developer tooling and deep observability
+
+**Features:**
+- **`mcpsonar report --format json|markdown|sarif`:**
+  - SARIF 2.1.0 with the stable rule IDs from `lint.RULES` and a confidence level per
+    finding;
+  - evidence excerpts only: no secrets, no response bodies;
+  - SARIF upload example for the GitHub Action;
+  - findings mapped to OWASP MCP Top 10 IDs.
+- **Detection quality:** an adversarial fixture corpus with positive and negative cases for
+  every rule, and `docs/detection-rules.md`.
+- **Packaging:**
+  - PyPI readiness: trusted publishing workflow, wheel and sdist smoke-tested on 3 operating
+    systems; publishing only with explicit approval;
+  - a verified `uvx mcpsonar`;
+  - optional shell completion;
+  - `doctor` extended to remote-mode checks.
 - **Per-phase and per-tool latency:**
   - connect, initialize, discovery and each probe measured separately;
-  - new Prometheus series: `mcpsonar_phase_latency_ms{phase}` and `mcpsonar_tool_latency_ms{tool}`;
-  - existing metric names unchanged;
-  - per-tool baselines and anomaly detection on top.
-- **Response drift**, for explicitly configured, deterministic probes only. It compares:
-  - the result *structure* (a JSON-shape fingerprint);
-  - the `isError` and error-code behavior;
-  - content types and the size bucket;
-  - an optional canonicalized hash with user-supplied JSONPath excludes.
-  Full bodies are not stored by default.
+  - shown in `status`/`history`, the API and Prometheus;
+  - existing metric names unchanged.
+- **Response drift:** for explicitly configured, deterministic probes only. It compares
+  structure, error behavior, size bucket and an optional canonicalized hash; full bodies
+  are not stored.
 - **Anomaly quality:**
-  - a cold-start policy;
-  - a zero-MAD floor tested on recorded series;
-  - sustained-regression versus spike classification;
-  - **recovery events**;
-  - baseline-poisoning resistance (a trimmed, slow-moving baseline);
-  - alert deduplication keyed by `(server, kind, episode)`;
-  - a reproducible statistical test corpus.
-- **Notifications:**
-  - Slack, Discord and email (SMTP) adapters on the existing `BaseAdapter`;
-  - deduplication;
-  - recovery notifications;
-  - per-adapter rate limits;
-  - configuration stays backward compatible.
-- **MCP SDK 2.x / spec 2026-07-28 spike**, on a branch:
-  - can `server/discover` and stateless requests be supported next to 1.x?
-  - produce a compatibility matrix and a decision record (ADR).
-- **Secret references** (`${env:NAME}`, `${file:…}`) resolved at check time (audit item T-03).
-
-**Dependencies:**
-- **Per-phase metrics:** the SDK must expose phase boundaries. Possible with 1.x through transport wrappers; re-check against 2.x.
-- **Drift:** needs a schema migration (a versioned schema table).
+  - cold start;
+  - the zero-MAD floor;
+  - sustained regression versus spike;
+  - recovery events;
+  - baseline-poisoning resistance;
+  - deduplication by episode;
+  - a reproducible statistical corpus.
+- **Secret references** (`${env:NAME}`, `${file:…}`), resolved at check time.
 
 **Acceptance criteria:**
-- **Metrics:** no Prometheus metric renamed; new series documented.
-- **Drift:** catches structural changes in the demo servers with zero false positives across 24 h of the watch deployment.
-- **Notifications:** each adapter has `MockTransport` tests; a recovery is sent exactly once per incident.
+- **SARIF:** passes GitHub's validator.
+- **Rules:** each has at least 3 positive and 3 negative fixtures.
+- **Metrics:** none renamed.
+- **Drift:** zero false positives over 24 h of the watch deployment.
 
 | Risk | Effort | Release blockers |
 |---|---|---|
-| Medium (statistics tuning; SDK 2.x unknowns) | 12–18 days | Schema migration framework; false-positive budget met on real data |
+| Medium | 14–20 days | Schema-migration framework (versioned) before drift data is stored |
 
 ---
 
-## v0.8.0 — Developer experience
+## v0.9.0 — Ecosystem adoption and teams
 
 **Features:**
-- **PyPI release** (`pip install mcpsonar`):
-  - trusted publishing (OIDC) from `release.yml`;
-  - sdist and wheel smoke-tested on 3 operating systems;
-  - published only with explicit maintainer approval.
-- **Detection rules and SARIF:**
-  - every lint rule gets a stable ID (`MCPS-P001`…), severity, explanation, remediation, and positive and negative fixtures;
-  - an adversarial corpus;
-  - documentation in `docs/detection-rules.md`;
-  - findings mapped to OWASP MCP Top 10 IDs.
-- **SARIF 2.1.0 output:** `mcpsonar scan --sarif out.sarif`, plus a GitHub code-scanning example in the Action.
-- **Structured output:**
-  - stable `--json` schemas, versioned;
-  - `mcpsonar validate-config`;
-  - CLI errors that say what to do next.
-- **Onboarding:**
-  - a quickstart, a FAQ and troubleshooting;
-  - example deployments (Compose with Caddy TLS, systemd);
-  - a configuration JSON Schema for editor completion.
-- **Contributor experience:**
-  - incremental `mypy` (security modules first);
-  - an architecture document;
-  - "good first issue" rule contributions.
-
-**Dependencies:**
-- v0.6 interfaces frozen enough to document.
-- The SARIF rule metadata comes from the rule registry.
-
-**Acceptance criteria:**
-- `pip install mcpsonar && mcpsonar demo` works on clean Linux, macOS and Windows machines.
-- SARIF passes GitHub's validator.
-- Every rule has at least 3 positive and 3 negative fixtures.
-
-| Risk | Effort | Release blockers |
-|---|---|---|
-| Low | 8–12 days | PyPI name ownership; maintainer approval to publish |
-
----
-
-## v0.9.0 — Teams and adoption
-
-**Features:**
-- **Roles:**
-  - multiple users with *admin*, *operator* (review and approve changes) and *viewer* roles;
-  - password change; session list and revoke.
-- **Audit history:** who approved which tool change, when, and why (append-only), exportable.
-- **MCPSonar Trust Report:** a shareable, self-contained HTML/PDF report per server or fleet, built for an IT owner. It covers:
-  - availability and SLOs;
-  - tool-definition changes and their review status;
-  - open heuristic findings, labeled as heuristics;
-  - drift;
-  - time-to-review.
-  It is generated from local data, with no service involved.
-- **Dashboard:**
+- **Conference-ready demo:**
+  - deterministic scenarios: healthy servers, rug pull, poisoning, latency regression and a
+    CI gate failure;
+  - selectable with `mcpsonar demo --scenario …`;
+  - fully local, no credentials;
+  - `docs/demo/{README,scenarios,speaker-guide,troubleshooting}.md`.
+  - The current demo already shows the first four scenarios in the dashboard, but on timers
+    with randomness. It needs a deterministic, step-driven mode and the CLI view.
+- **Onboarding:** a quickstart that goes from install to the first scan, the dashboard, a
+  monitored server, a reviewed change and a CI check in minutes; a FAQ; troubleshooting.
+- **Notifications:** Slack, Discord and email adapters on `BaseAdapter`; deduplication;
+  recovery notifications.
+- **Dashboard consistency and UX:**
   - an incident timeline (started, recovered);
-  - filters (unreachable, auth required, unreviewed changes, findings, regressions);
-  - accessible colors and mobile layout;
-  - explicit loading and error states.
-- **Community validation:**
-  - recruit 5–10 real deployments;
-  - publish anonymized feedback and false-positive reports;
-  - rule tuning based on them.
+  - filters: unreachable, auth required, unreviewed changes, findings, regressions;
+  - accessible colors; mobile layout; loading and error states.
+- **Teams:** roles (admin, operator, viewer), password change, session list, and an
+  append-only audit history of approvals.
+- **MCPSonar Trust Report:** an offline HTML/PDF summary per server or fleet covering
+  availability, definition changes and their review status, and heuristic findings labeled
+  as such.
+- **Community validation:** 5–10 real deployments, with false-positive reports turned into
+  fixtures.
 
 **Acceptance criteria:**
-- Role checks are enforced server-side, with a test per endpoint.
-- The audit log can't be edited through the API.
-- The Trust Report renders offline and states the limits of its heuristics.
+- **Demo:** runs identically 3 times in a row offline.
+- **Roles:** enforced server-side, with a test per endpoint.
+- **Trust Report:** states the limits of its heuristics.
 
 | Risk | Effort | Release blockers |
 |---|---|---|
-| Medium (auth model change, data migration) | 12–15 days | Migration from single-admin tested on real v0.8 databases |
+| Medium (auth model change) | 15–20 days | Migration from single-admin tested on real databases |
 
 ---
 
 ## v1.0.0 — Stable
 
 **Features and work:**
-- **Stable interfaces:** documented and versioned for the REST API, `CheckEvent`, the lockfile format, metric names and the config schema, with a deprecation policy.
+- **Stable interfaces:** documented and versioned, with a deprecation policy, for:
+  - the REST API, `CheckEvent`, the lockfile format, metric names and the config schema;
+  - **CLI commands, flags, JSON documents (`schema_version`) and exit codes.**
 - **MCP spec 2026-07-28 support:** via SDK 2.x or a dual-stack client, according to the v0.7 ADR. Older revisions keep working.
 - **Upgrades:** reliable upgrade path from v0.6+ databases, with tests on stored fixtures; documented backup and restore.
 - **External security review:** of auth, network policy and stdio; fixes released before the 1.0 tag.

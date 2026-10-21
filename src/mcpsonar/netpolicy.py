@@ -33,8 +33,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpcore
-import httpx
+import httpcore2
+import httpx2
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
@@ -46,8 +46,8 @@ _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 _TRUE = {"1", "true", "yes", "on"}
 
 
-class BlockedDestinationError(httpcore.ConnectError):
-    """A connection refused by the outbound policy (surfaces as ``httpx.ConnectError``)."""
+class BlockedDestinationError(httpcore2.ConnectError):
+    """A connection refused by the outbound policy (surfaces as ``httpx2.ConnectError``)."""
 
 
 def _networks(values: Iterable[str]) -> tuple[IPNetwork, ...]:
@@ -127,12 +127,12 @@ async def resolve(host: str, port: int) -> list[IPAddress]:
     return list(seen)
 
 
-class PolicyNetworkBackend(httpcore.AsyncNetworkBackend):
-    """Wraps httpcore's network backend: resolve, check every address, connect to an
+class PolicyNetworkBackend(httpcore2.AsyncNetworkBackend):
+    """Wraps httpcore2's network backend: resolve, check every address, connect to an
     allowed one *by address* — so the address that was checked is the one connected to."""
 
     def __init__(
-        self, inner: httpcore.AsyncNetworkBackend, policy: OutboundPolicy | None = None
+        self, inner: httpcore2.AsyncNetworkBackend, policy: OutboundPolicy | None = None
     ) -> None:
         self._inner = inner
         self._policy = policy
@@ -144,12 +144,12 @@ class PolicyNetworkBackend(httpcore.AsyncNetworkBackend):
         timeout: float | None = None,
         local_address: str | None = None,
         socket_options: Iterable[Any] | None = None,
-    ) -> httpcore.AsyncNetworkStream:
+    ) -> httpcore2.AsyncNetworkStream:
         policy = self._policy or get_policy()
         try:
             addresses = await asyncio.wait_for(resolve(host, port), timeout)
         except (OSError, TimeoutError) as exc:
-            raise httpcore.ConnectError(f"could not resolve {host}: {exc}") from exc
+            raise httpcore2.ConnectError(f"could not resolve {host}: {exc}") from exc
         reasons = []
         last_error: Exception | None = None
         for ip in addresses:
@@ -161,7 +161,7 @@ class PolicyNetworkBackend(httpcore.AsyncNetworkBackend):
                     str(ip), port, timeout=timeout, local_address=local_address,
                     socket_options=socket_options,
                 )
-            except httpcore.ConnectError as exc:
+            except httpcore2.ConnectError as exc:
                 last_error = exc
         if last_error is not None:
             raise last_error
@@ -169,7 +169,7 @@ class PolicyNetworkBackend(httpcore.AsyncNetworkBackend):
             f"outbound policy blocked {host}: " + "; ".join(dict.fromkeys(reasons))
         )
 
-    async def connect_unix_socket(self, *args: Any, **kwargs: Any) -> httpcore.AsyncNetworkStream:
+    async def connect_unix_socket(self, *args: Any, **kwargs: Any) -> httpcore2.AsyncNetworkStream:
         raise BlockedDestinationError("outbound policy: unix sockets are not allowed")
 
     async def sleep(self, seconds: float) -> None:
@@ -178,9 +178,9 @@ class PolicyNetworkBackend(httpcore.AsyncNetworkBackend):
 
 def policy_transport(
     verify: ssl.SSLContext | bool = True, policy: OutboundPolicy | None = None
-) -> httpx.AsyncHTTPTransport:
-    """An httpx transport whose connections go through :class:`PolicyNetworkBackend`."""
-    transport = httpx.AsyncHTTPTransport(verify=verify)
-    pool = transport._pool  # httpcore.AsyncConnectionPool; no public hook for the backend
+) -> httpx2.AsyncHTTPTransport:
+    """An httpx2 transport whose connections go through :class:`PolicyNetworkBackend`."""
+    transport = httpx2.AsyncHTTPTransport(verify=verify)
+    pool = transport._pool  # httpcore2.AsyncConnectionPool; no public hook for the backend
     pool._network_backend = PolicyNetworkBackend(pool._network_backend, policy)
     return transport

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import ipaddress
 import logging
 import os
@@ -21,8 +22,11 @@ import webbrowser
 
 import uvicorn
 
+from .commands import register_all
+from .commands.version import version_line
 from .dashboard import create_app
 from .loader import ConfigError, load_config
+from .output import EXIT_INTERRUPTED
 from .scheduler import Scheduler
 from .state import StateStore
 from .storage import Storage
@@ -166,8 +170,15 @@ async def _serve(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="mcpsonar")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        prog="mcpsonar",
+        description="MCP observability and security: monitor MCP servers, inspect their "
+        "tools, detect tool changes and poisoning, gate CI on them.",
+        epilog="Exit codes: 0 ok · 1 problem found (findings, drift, failed check) · "
+        "2 could not run (usage, connection, config). Docs: docs/cli.md",
+    )
+    parser.add_argument("--version", action="version", version=version_line())
+    sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     run = sub.add_parser("run", help="Serve the dashboard/API and run checks.")
     run.add_argument(
@@ -241,6 +252,8 @@ def _build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--fail-on", choices=["high", "medium", "low", "never"], default="high",
                       help="Lowest finding severity that fails the scan (default: high).")
     scan.add_argument("--json", action="store_true", help="Machine-readable output.")
+    scan.add_argument("--format", choices=["text", "json"], default="text",
+                      help="Output format (--json is the same as --format json).")
     scan.add_argument("--timeout", type=float, default=20.0, help="Seconds (default 20).")
 
     demo = sub.add_parser(
@@ -252,24 +265,40 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Check interval in seconds (default 3: the story takes ~5 min).")
     demo.add_argument("--db", default=None, help="Keep the demo DB here (default: temp file).")
     demo.add_argument("--no-browser", action="store_true", help="Don't open the dashboard.")
+
+    register_all(sub)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("mcp").setLevel(logging.WARNING)  # per-session chatter from the SDK
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):  # Windows consoles default to a legacy codepage
+            stream.reconfigure(encoding="utf-8", errors="replace")
     args = _build_parser().parse_args(argv)
+    long_running = args.command in ("run", "demo")
+    # The server commands log their activity; one-shot commands keep stderr for
+    # diagnostics only, so their output stays clean in scripts and CI.
+    logging.basicConfig(
+        level=logging.INFO if long_running else logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
+    logging.getLogger("httpcore2").setLevel(logging.WARNING)
+    # The SDK logs per-session chatter (and, for one-shot commands, server stderr noise).
+    logging.getLogger("mcp").setLevel(logging.WARNING if long_running else logging.CRITICAL)
 
     if args.command == "scan":
         from .scan import run_scan
 
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         return asyncio.run(run_scan(args))
+
+    handler = getattr(args, "handler", None)
+    if handler is not None:
+        try:
+            result = handler(args)
+            return asyncio.run(result) if inspect.iscoroutine(result) else result
+        except KeyboardInterrupt:
+            return EXIT_INTERRUPTED
 
     if args.command == "demo":
         db = args.db or os.path.join(tempfile.mkdtemp(prefix="mcpsonar-demo-"), "demo.db")
