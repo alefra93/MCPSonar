@@ -1,0 +1,43 @@
+name: New detection rule
+description: Propose a tool-poisoning / prompt-injection rule (with real examples)
+labels: [detection, rule-proposal]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Good rules are explainable and testable. Each one ships with positive cases (must
+        flag) and negative cases (must not flag) as test fixtures. Findings are heuristics
+        for human review, so propose a severity that reflects that.
+  - type: input
+    id: name
+    attributes:
+      label: Proposed rule ID
+      placeholder: e.g. credential-in-default-value
+    validations:
+      required: true
+  - type: textarea
+    id: pattern
+    attributes:
+      label: What should it detect, and why is it risky?
+      description: Link to the write-up / PoC / incident it comes from, if any.
+    validations:
+      required: true
+  - type: textarea
+    id: positive
+    attributes:
+      label: Positive examples (tool definition JSON that must be flagged)
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: negative
+    attributes:
+      label: Negative examples (legitimate definitions that must NOT be flagged)
+      render: json
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Suggested severity
+      options: [high, medium, low]

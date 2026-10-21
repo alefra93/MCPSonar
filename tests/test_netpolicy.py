@@ -12,7 +12,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import ClassVar
 
-import httpx
+import httpx2
 import pytest
 
 from mcpsonar import netpolicy
@@ -68,7 +68,7 @@ def test_allow_and_deny_lists():
 
 
 def test_transport_hook_is_installed():
-    """Guards the one private-attribute access against an httpcore upgrade."""
+    """Guards the one private-attribute access against an httpcore2 upgrade."""
     t = policy_transport()
     assert isinstance(t._pool._network_backend, netpolicy.PolicyNetworkBackend)
 
@@ -118,7 +118,7 @@ async def test_hostname_resolving_to_metadata_is_blocked(monkeypatch):
 
     monkeypatch.setattr(netpolicy, "resolve", fake_resolve)
     async with _http_client() as client:
-        with pytest.raises(httpx.ConnectError, match="metadata"):
+        with pytest.raises(httpx2.ConnectError, match="metadata"):
             await client.get("http://rebind.attacker.test/mcp")
 
 
@@ -144,7 +144,7 @@ async def test_rebinding_pins_the_checked_address(monkeypatch, serve):
 async def test_redirect_to_metadata_is_blocked(serve):
     handler, port = serve(redirect_to="http://169.254.169.254/latest/meta-data/")
     async with _http_client() as client:
-        with pytest.raises(httpx.ConnectError, match="metadata"):
+        with pytest.raises(httpx2.ConnectError, match="metadata"):
             await client.get(f"http://127.0.0.1:{port}/mcp")
     assert len(handler.seen) == 1
 
@@ -174,7 +174,7 @@ async def test_redirect_loop_is_bounded(serve):
     handler, port = serve()
     handler.redirect_to = f"http://127.0.0.1:{port}/again"
     async with _http_client() as client:
-        with pytest.raises(httpx.TooManyRedirects):
+        with pytest.raises(httpx2.TooManyRedirects):
             await client.get(f"http://127.0.0.1:{port}/mcp")
     assert len(handler.seen) <= 6
 

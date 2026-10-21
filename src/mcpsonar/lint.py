@@ -22,6 +22,91 @@ Severity = Literal["high", "medium", "low"]
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
+@dataclass(frozen=True)
+class RuleInfo:
+    """Documentation for a rule ID. IDs are stable: reports, SARIF and suppressions key on
+    them, so a rule may be reworded or retuned but never renamed."""
+
+    title: str
+    explanation: str
+    remediation: str
+
+
+#: Every rule this module can emit. Findings are *heuristic* matches on definition text:
+#: reasons for a human to read the tool, never proof of malicious behavior.
+RULES: dict[str, RuleInfo] = {
+    "hidden-unicode": RuleInfo(
+        "Invisible characters",
+        "Zero-width, bidirectional-override or Unicode tag characters are invisible to a person "
+        "reviewing the text but are read by the model; they can hide or reorder instructions.",
+        "Inspect the escaped text (shown as \\uXXXX). Legitimate tool text has no reason to "
+        "contain them; ask the publisher to remove them.",
+    ),
+    "prompt-injection": RuleInfo(
+        "Instruction override",
+        "Text that tells the model to ignore or override its previous instructions.",
+        "Read the full description. Do not approve the tool until the override is explained "
+        "or removed.",
+    ),
+    "hidden-from-user": RuleInfo(
+        "Concealment from the user",
+        "Asks the model not to tell, show or mention something to the user.",
+        "A tool has no legitimate reason to keep the model's actions from the user. Treat as "
+        "high priority for review.",
+    ),
+    "fake-system-tag": RuleInfo(
+        "Fake system markup",
+        "Pseudo-tags such as <IMPORTANT> or <system> that imitate privileged instructions.",
+        "Check what the tagged block asks for; prefer tools whose descriptions only describe "
+        "what the tool does.",
+    ),
+    "sensitive-path": RuleInfo(
+        "Credential or config path",
+        "Mentions SSH keys, cloud credentials, .env files or MCP client configuration.",
+        "Confirm the tool genuinely needs that file. Instructions to read credentials are a "
+        "classic exfiltration setup.",
+    ),
+    "exfiltration": RuleInfo(
+        "Send data elsewhere",
+        "Asks to send, post or upload data to a URL, webhook or e-mail address.",
+        "Verify the destination belongs to the tool's own service and that sending data there "
+        "is the tool's documented purpose.",
+    ),
+    "tool-shadowing": RuleInfo(
+        "Influences other tools",
+        "Tries to change how the model uses *other* tools (e.g. 'whenever you use another tool').",
+        "A tool should describe itself only. Check which tools it targets and why.",
+    ),
+    "hidden-precondition": RuleInfo(
+        "Hidden side action",
+        "Demands an extra action (read, send, collect) before the tool can be used.",
+        "Check whether the precondition is real; side actions are a common way to smuggle data "
+        "into tool arguments.",
+    ),
+    "coercive-instruction": RuleInfo(
+        "Imperative aimed at the model",
+        "Phrases like 'you must always...' addressed to the model rather than the user.",
+        "Often benign style; worth a quick read in combination with other findings.",
+    ),
+    "encoded-blob": RuleInfo(
+        "Encoded payload",
+        "A long base64-like string that could hide instructions or data.",
+        "Decode it and check what it contains before trusting the tool.",
+    ),
+    "long-description": RuleInfo(
+        "Unusually long description",
+        "Very long descriptions leave room to hide instructions far from the visible summary.",
+        "Read the whole description, not only the first lines.",
+    ),
+    "suspicious-parameter": RuleInfo(
+        "Context-exfiltration parameter",
+        "A parameter name seen in real tool-poisoning proofs of concept (e.g. 'sidenote', "
+        "'conversation_history') to carry context out of the conversation.",
+        "Check what the tool expects in that parameter and whether it needs the conversation.",
+    ),
+}
+
+
 @dataclass
 class Finding:
     tool: str

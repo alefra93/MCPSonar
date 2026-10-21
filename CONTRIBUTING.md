@@ -41,7 +41,8 @@ mcpsonar demo             # the whole product, live
   claims in docs and UI proportional to the evidence.
 - Python 3.11+, type hints on public functions, code that reads like the surrounding code.
   Comments explain *why*, not what.
-- `mcp` stays `<2` until the SDK 2.x migration lands (see the roadmap). Don't bump it in an
+- `mcp` is pinned to the 2.x line (`>=2.3,<3`). A new major version is a deliberate
+  migration with its own ADR (see `docs/adr/0001-mcp-sdk-2.md`), never a bump inside an
   unrelated PR.
 
 ## Adding things

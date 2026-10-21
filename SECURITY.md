@@ -27,6 +27,7 @@ is trusted.
 | Boundary | Trusted | Untrusted | Controls |
 |---|---|---|---|
 | Dashboard / API | the admin (after login) | everyone else on the network; other websites in the admin's browser | login with setup token, server-side sessions, login throttling, CSRF (`Origin` / `Sec-Fetch-Site`) and `Host` checks, security headers, body limits |
+| API tokens (CLI, automation) | holders of a token the admin created | everyone else | hashed at rest, shown once, *read* (GET only) or *write* scope, optional expiry, revocable, cannot mint tokens, no cookie (not CSRF-able) |
 | Monitored MCP servers | — | their responses, tool definitions, annotations, redirects | outbound policy (metadata / link-local blocked, checked at connect time), credentials kept on their origin, timeouts, pagination limits, tool definitions rendered escaped |
 | stdio servers | the command the admin configured | — (it *is* code execution) | no shell, minimal environment, refused over an unauthenticated API |
 | Tool probes | tools the admin listed | annotations (`readOnlyHint`, `destructiveHint`) | opt-in only, never call unlisted tools, skip annotated-destructive tools by default |

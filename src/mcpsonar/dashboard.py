@@ -287,6 +287,12 @@ _PAGE = r"""<!doctype html>
        box-shadow:0 0 0 3px var(--accent-soft);}
   .field textarea{font-family:var(--mono);font-size:12.5px;resize:vertical;}
   .row2{display:flex;gap:12px;} .row2>*{flex:1;}
+  .toklist{display:flex;flex-direction:column;gap:8px;margin:0 0 16px;}
+  .tok{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);
+       border-radius:10px;background:var(--surface-2);font-size:13px;}
+  .tok .nm{font-weight:650;} .tok .meta{color:var(--muted);font-size:12px;margin-right:auto;}
+  .newtok{font-family:var(--mono);font-size:12px;word-break:break-all;padding:10px 12px;
+       border:1px dashed var(--accent);border-radius:10px;background:var(--accent-soft);margin:0 0 14px;}
   .buttons{display:flex;justify-content:flex-end;gap:10px;margin-top:10px;}
   .err{color:var(--down);font-size:13px;min-height:18px;margin-top:6px;}
   .ranges{display:flex;gap:4px;margin-bottom:14px;background:var(--surface-2);padding:3px;border-radius:9px;width:max-content;}
@@ -365,6 +371,7 @@ _PAGE = r"""<!doctype html>
   <button class="btn" onclick="location.href='/api/export'">Export</button>
   <button class="btn" onclick="openImport()">Import</button>
   <button class="btn primary" onclick="openForm()">＋ Add server</button>
+  <button class="btn" id="tokensBtn" style="display:none" onclick="openTokens()">API tokens</button>
   <button class="btn" id="logoutBtn" style="display:none" onclick="logout()">Logout</button>
 </div>
 
@@ -460,6 +467,28 @@ _PAGE = r"""<!doctype html>
     <div class="buttons">
       <button class="btn" onclick="closeChanges()">Close</button>
       <button class="btn primary" id="ackBtn" onclick="ackChanges()">✓ Approve changes</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="tokensOverlay">
+  <div class="modal">
+    <h2>API tokens</h2>
+    <p class="lead">For the <code>mcpsonar</code> CLI and scripts: set <code>MCPSONAR_URL</code>
+      and <code>MCPSONAR_TOKEN</code>. A token is shown once; only its hash is stored.
+      <b>read</b> tokens can only read; <b>write</b> tokens can also change servers.</p>
+    <div class="toklist" id="tokList"></div>
+    <div id="newTok" class="newtok" style="display:none"></div>
+    <div class="row2">
+      <div class="field"><label>Name</label><input id="t_name" placeholder="laptop-cli"></div>
+      <div class="field"><label>Scope</label>
+        <select id="t_scope"><option value="read">read</option><option value="write">write</option></select></div>
+      <div class="field"><label>Expires in (days)</label><input id="t_days" type="number" min="1" placeholder="never"></div>
+    </div>
+    <div class="err" id="tokErr"></div>
+    <div class="buttons">
+      <button class="btn" onclick="closeTokens()">Close</button>
+      <button class="btn primary" onclick="createToken()">Create token</button>
     </div>
   </div>
 </div>
@@ -900,13 +929,42 @@ async function doImport(){
   }catch(e){ $("importErr").textContent="Error: "+e.message; }
 }
 
+/* API tokens */
+function closeTokens(){ $("tokensOverlay").classList.remove("open"); $("newTok").style.display="none"; $("newTok").textContent=""; }
+function openTokens(){ $("tokErr").textContent=""; $("t_name").value=""; $("t_days").value=""; loadTokens(); $("tokensOverlay").classList.add("open"); }
+const fmtDate = t => t ? new Date(t*1000).toLocaleString() : "never";
+async function loadTokens(){
+  try{
+    const list=await api("GET","/api/tokens");
+    $("tokList").innerHTML = list.length ? list.map(t=>
+      `<div class="tok"><span class="nm">${esc(t.name)}</span><span class="badge">${esc(t.scope)}</span>`+
+      `<span class="meta">created ${esc(fmtDate(t.created_at))} · expires ${esc(fmtDate(t.expires_at))} · last used ${esc(t.last_used_at?fmtDate(t.last_used_at):"never")}</span>`+
+      `<button class="btn" onclick="revokeToken('${esc(t.id)}')">Revoke</button></div>`).join("")
+      : '<p class="muted">No tokens yet.</p>';
+  }catch(e){ $("tokErr").textContent="Error: "+e.message; }
+}
+async function createToken(){
+  $("tokErr").textContent="";
+  const days=parseInt($("t_days").value,10);
+  try{
+    const t=await api("POST","/api/tokens",{name:$("t_name").value.trim(),scope:$("t_scope").value,
+      expires_in_days: Number.isFinite(days)?days:null});
+    $("newTok").style.display=""; $("newTok").textContent="Copy it now — it will not be shown again:  "+t.token;
+    $("t_name").value=""; loadTokens();
+  }catch(e){ $("tokErr").textContent="Error: "+e.message; }
+}
+async function revokeToken(id){
+  if(!confirm("Revoke this token? Anything using it stops working immediately.")) return;
+  try{ await api("DELETE","/api/tokens/"+id); loadTokens(); }catch(e){ $("tokErr").textContent="Error: "+e.message; }
+}
+
 /* auth */
 async function logout(){ await fetch("/api/auth/logout",{method:"POST"}); location.href="/login"; }
 async function initAuth(){
   try{
     const s=await (await fetch("/api/auth/status")).json();
     if(s.auth_enabled){
-      $("logoutBtn").style.display="";
+      $("logoutBtn").style.display=""; $("tokensBtn").style.display="";
       if(s.username){ $("whoami").innerHTML='<span class="av">'+esc(s.username[0])+'</span>'+esc(s.username); }
     }
   }catch(e){}

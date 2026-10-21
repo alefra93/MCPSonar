@@ -9,22 +9,22 @@ Kept as its own file (not a subclass) so each version's rules can evolve indepen
 
 from __future__ import annotations
 
-from mcp.types import InitializeResult, Tool
+from mcp_types import Tool
 
-from .base import BaseValidator, register
+from .base import BaseValidator, ServerHandshake, register
 
 
 class V20250618Validator(BaseValidator):
     spec_version = "2025-06-18"
 
-    def validate(self, init: InitializeResult, tools: list[Tool]) -> list[str]:
+    def validate(self, server: ServerHandshake, tools: list[Tool]) -> list[str]:
         issues: list[str] = []
 
-        if init.capabilities is None or init.capabilities.tools is None:
+        if server.capabilities is None or server.capabilities.tools is None:
             issues.append("server does not advertise the 'tools' capability")
 
         for tool in tools:
-            if tool.inputSchema is None:
+            if tool.input_schema is None:
                 issues.append(f"tool '{tool.name}' is missing inputSchema")
 
         return issues

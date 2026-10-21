@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mcp.types import Tool
+from mcp_types import Tool
 
 from mcpsonar.lint import lint_tool, lint_tools, risk_count
 from mcpsonar.tooldefs import diff_tools, fingerprint, index_tools, normalize_tool

@@ -1,9 +1,19 @@
 """Core check engine: health-check a single MCP server and produce a :class:`CheckEvent`.
 
-The engine is the only place that speaks MCP. It connects via the official SDK, runs the
-``initialize`` handshake, lists tools, optionally test-calls configured tools, applies the
+The engine is the only place that speaks MCP. It connects via the official SDK (mcp 2.x),
+negotiates the protocol era, lists tools, optionally test-calls configured tools, applies the
 version-aware validators, and classifies the result. It **never raises**: any connection or
 protocol failure becomes a ``down`` event, so the scheduler can treat every server uniformly.
+
+Two protocol eras are spoken by one client (see ``docs/adr/0001-mcp-sdk-2.md``):
+
+* **modern** (2026-07-28 and later): no handshake; ``server/discover`` tells the client the
+  server's versions and capabilities;
+* **handshake** (2024-11-05 … 2025-11-25): the ``initialize`` handshake.
+
+:func:`negotiate` probes ``server/discover`` and falls back to ``initialize`` — and reports
+the latency of the RPC that *succeeded*, so legacy servers do not show a latency step caused
+by the failed probe.
 """
 
 from __future__ import annotations
@@ -13,17 +23,24 @@ import contextlib
 import functools
 import ssl
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any
+from typing import Any, Literal
 
-import httpx
+import httpx2
+import mcp_types as types
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.types import InitializeResult, PaginatedRequestParams, Tool
+from mcp.shared.exceptions import MCPError
+from mcp_types import PaginatedRequestParams, Tool
+from mcp_types.version import (
+    HANDSHAKE_PROTOCOL_VERSIONS,
+    LATEST_MODERN_VERSION,
+    MODERN_PROTOCOL_VERSIONS,
+)
+from pydantic import ValidationError
 
 from .models import CheckEvent, CheckStatus, ServerConfig, Thresholds, ToolProbe, TransportType
 from .netpolicy import policy_transport
@@ -37,70 +54,105 @@ def _ssl_context() -> ssl.SSLContext:
     """One TLS context for every check. Building one loads the CA bundle (~200 ms of blocking
     CPU); doing that per check stalls the event loop and inflates the latency measured for
     every *other* server being checked at the same time."""
-    return httpx.create_ssl_context()
+    return httpx2.create_ssl_context()
 
 
 MAX_REDIRECTS = 5
 
 
-def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
+def _origin(url: httpx2.URL) -> tuple[str, str, int | None]:
     return url.scheme, url.host, url.port
+
+
+_REJECTIONS = (401, 403, 429)
+
+
+@dataclass
+class HttpLog:
+    """What the server said at the HTTP layer. mcp 2.x turns a 401/403/429 into a generic
+    ``MCPError(-32603)`` — status and headers are lost — so the engine records them here to
+    keep classifying them: protected (``auth_required``), credentials rejected, rate limited.
+    """
+
+    status: int | None = None  # last 401/403/429
+    headers: dict[str, str] = field(default_factory=dict)
+    last_error: int | None = None  # last HTTP error status of any kind (for the detail)
+
+    async def on_response(self, response: httpx2.Response) -> None:
+        if response.status_code >= 400:
+            self.last_error = response.status_code
+        if response.status_code in _REJECTIONS:
+            self.status = response.status_code
+            self.headers = {k.lower(): v for k, v in response.headers.items()}
+        elif response.is_success and response.request.method == "POST":
+            # a later success supersedes earlier failures
+            self.status, self.headers, self.last_error = None, {}, None
+
+    def describe(self) -> str:
+        """`` (HTTP 503)``-style suffix for an error detail, or ''."""
+        return f" (HTTP {self.last_error})" if self.last_error else ""
 
 
 def _http_client(
     headers: dict[str, str] | None = None,
-    timeout: httpx.Timeout | None = None,
-    auth: httpx.Auth | None = None,
-) -> httpx.AsyncClient:
+    timeout: httpx2.Timeout | None = None,
+    auth: httpx2.Auth | None = None,
+    *,
+    log: HttpLog | None = None,
+) -> httpx2.AsyncClient:
     """Same defaults as the SDK's ``create_mcp_http_client``, plus:
 
     * the shared TLS context;
     * the outbound connection policy (:mod:`mcpsonar.netpolicy`) on every connection,
-      redirects included;
-    * credentials stay on the origin they were configured for: httpx only drops
-      ``Authorization`` on a cross-origin redirect, so every *configured* header (``X-API-Key``
-      and friends) is removed from requests that left the first request's origin.
+      redirects included (the SDK itself follows MCP redirects only within the origin);
+    * credentials stay on the origin they were configured for: every *configured* header
+      (``Authorization``, ``X-API-Key``, ...) is removed from a request that left the first
+      request's origin;
+    * ``log`` records 401/403/429 answers (see :class:`HttpLog`).
     """
     secret_names = list(headers or {})
     first_origin: list[tuple[str, str, int | None]] = []
 
-    async def _keep_credentials_on_origin(request: httpx.Request) -> None:
+    async def _keep_credentials_on_origin(request: httpx2.Request) -> None:
         if not first_origin:
             first_origin.append(_origin(request.url))
         elif _origin(request.url) != first_origin[0]:
             for name in secret_names:
                 request.headers.pop(name, None)
 
-    return httpx.AsyncClient(
+    hooks: dict[str, list[Any]] = {"request": [_keep_credentials_on_origin]}
+    if log is not None:
+        hooks["response"] = [log.on_response]
+    return httpx2.AsyncClient(
         follow_redirects=True,
         max_redirects=MAX_REDIRECTS,
         headers=headers,
-        timeout=timeout if timeout is not None else httpx.Timeout(30.0, read=300.0),
+        timeout=timeout if timeout is not None else httpx2.Timeout(30.0, read=300.0),
         auth=auth,
         transport=policy_transport(verify=_ssl_context()),
-        event_hooks={"request": [_keep_credentials_on_origin]},
+        event_hooks=hooks,
     )
 
 
 @contextlib.asynccontextmanager
-async def _open_session(cfg: ServerConfig, timeout_s: float) -> AsyncIterator[ClientSession]:
-    """Open an initialized-capable MCP ClientSession over the configured transport.
+async def _open_session(
+    cfg: ServerConfig, timeout_s: float, log: HttpLog | None = None
+) -> AsyncIterator[ClientSession]:
+    """Open an MCP ClientSession (not yet negotiated: call :func:`negotiate`).
 
-    * http  — Streamable HTTP (3-tuple client), with optional auth ``headers``.
-    * sse   — legacy HTTP+SSE (2-tuple client), with optional auth ``headers``.
+    * http  — Streamable HTTP, with optional auth ``headers``.
+    * sse   — legacy HTTP+SSE (deprecated by 2026-07-28, still supported), same headers.
     * stdio — mcpsonar launches ``command``/``args`` and speaks over the process's stdio.
 
-    The timeout bounds connect/read so a hung server surfaces as ``down`` rather than
-    blocking forever.
+    The timeout bounds every request, so a hung server surfaces as ``down`` rather than
+    blocking forever. HTTP rejections are recorded into ``log`` when given.
     """
     headers = cfg.headers or None
-    # Every request on the session (initialize, tools/list, ...) gives up after timeout_s:
-    # without it a stdio server that never answers would hang its check loop forever.
-    read_timeout = timedelta(seconds=timeout_s)
     if cfg.transport == TransportType.SSE:
+        factory = functools.partial(_http_client, log=log)
         async with sse_client(
-            cfg.url, headers=headers, timeout=timeout_s, httpx_client_factory=_http_client
-        ) as (read, write), ClientSession(read, write, read_timeout) as session:
+            cfg.url, headers=headers, timeout=timeout_s, httpx_client_factory=factory
+        ) as (read, write), ClientSession(read, write, timeout_s) as session:
             yield session
     elif cfg.transport == TransportType.STDIO:
         # No shell: the command is exec'd directly with its argv. The SDK passes only a
@@ -111,17 +163,107 @@ async def _open_session(cfg: ServerConfig, timeout_s: float) -> AsyncIterator[Cl
         )
         async with (
             stdio_client(params) as (read, write),
-            ClientSession(read, write, read_timeout) as session,
+            ClientSession(read, write, timeout_s) as session,
         ):
             yield session
     else:  # TransportType.HTTP -> Streamable HTTP
-        timeout = httpx.Timeout(timeout_s)
+        timeout = httpx2.Timeout(timeout_s)
         async with (
-            _http_client(headers=headers, timeout=timeout) as http_client,
-            streamable_http_client(cfg.url, http_client=http_client) as (read, write, _),
-            ClientSession(read, write, read_timeout) as session,
+            _http_client(headers=headers, timeout=timeout, log=log) as http_client,
+            streamable_http_client(cfg.url, http_client=http_client) as (read, write),
+            ClientSession(read, write, timeout_s) as session,
         ):
             yield session
+
+
+# ---- protocol negotiation ---------------------------------------------------- #
+#: The SDK's fixed timeout for the ``server/discover`` probe (a legacy server that ignores
+#: unknown methods costs this much once per check before the ``initialize`` fallback).
+DISCOVER_PROBE_TIMEOUT_S = 10.0
+_UNSUPPORTED_PROTOCOL_VERSION = -32022
+
+
+@dataclass(frozen=True)
+class Handshake:
+    """What a server told us about itself, whichever era it speaks. Validators and the
+    scanner use this instead of the handshake-only ``InitializeResult``."""
+
+    protocol_version: str | None
+    server_info: types.Implementation | None
+    capabilities: types.ServerCapabilities | None
+    era: Literal["modern", "handshake"]
+    latency_ms: float  # of the RPC that succeeded (discover *or* initialize), not both
+
+
+def _supported_versions(data: Any) -> list[str] | None:
+    try:
+        return types.UnsupportedProtocolVersionErrorData.model_validate(data).supported
+    except ValidationError:
+        return None
+
+
+def _handshake(session: ClientSession, era: Literal["modern", "handshake"], ms: float) -> Handshake:
+    return Handshake(session.protocol_version, session.server_info,
+                     session.server_capabilities, era, ms)
+
+
+async def _initialize(session: ClientSession, since: float | None) -> Handshake:
+    start = perf_counter()
+    await session.initialize()
+    return _handshake(session, "handshake", (perf_counter() - (since or start)) * 1000.0)
+
+
+async def negotiate(
+    session: ClientSession, include_startup: bool = False, log: HttpLog | None = None
+) -> Handshake:
+    """Pick the protocol era the way the SDK's ``mode="auto"`` does.
+
+    Latency: by default only the RPC that succeeded is timed, so a handshake-era HTTP
+    server does not look twice as slow because of the failed ``server/discover`` probe.
+    With ``include_startup`` (stdio) the time runs from the first request: there the first
+    request also waits for the process to start, and that has always been part of a stdio
+    server's measured latency — keeping it keeps baselines continuous across the upgrade.
+
+    ``server/discover`` is probed at the newest modern version (once more at a mutual
+    version if the server answers -32022 naming one). Any other JSON-RPC error — or a
+    discover result that is unparseable or offers no modern version — means a handshake-era
+    server: fall back to ``initialize``. A server that is modern-only *and* shares no
+    version with us raises. Transport errors propagate (an outage is not an era verdict).
+
+    An HTTP 401/403/429 on the probe (recorded in ``log``) is not an era signal either: the
+    endpoint refuses *every* request, so the error is raised at once instead of paying a
+    second round trip for an ``initialize`` that would be refused the same way.
+    """
+    since = perf_counter() if include_startup else None
+    version = LATEST_MODERN_VERSION
+    for attempt in range(2):
+        start = since or perf_counter()
+        try:
+            raw = await session.send_discover(version)
+        except MCPError as exc:
+            if log is not None and log.status in _REJECTIONS:
+                raise  # protected / throttled endpoint: the answer won't change
+            if exc.code == _UNSUPPORTED_PROTOCOL_VERSION:
+                supported = _supported_versions(exc.error.data)
+                mutual = [v for v in MODERN_PROTOCOL_VERSIONS if v in (supported or ())]
+                if mutual and attempt == 0:
+                    version = mutual[-1]
+                    continue
+                if supported is not None and not any(
+                    v in HANDSHAKE_PROTOCOL_VERSIONS for v in supported
+                ):
+                    raise  # modern-only, and no version in common: a real incompatibility
+            return await _initialize(session, since)
+        latency_ms = (perf_counter() - start) * 1000.0
+        try:
+            result = types.DiscoverResult.model_validate(raw)
+        except ValidationError:
+            return await _initialize(session, since)
+        if not any(v in result.supported_versions for v in MODERN_PROTOCOL_VERSIONS):
+            return await _initialize(session, since)  # answers discover, advertises only legacy
+        session.adopt(result)
+        return _handshake(session, "modern", latency_ms)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 MAX_TOOL_PAGES = 100
@@ -132,7 +274,7 @@ class PaginationError(Exception):
 
 
 async def list_all_tools(session: ClientSession, max_pages: int = MAX_TOOL_PAGES) -> list[Tool]:
-    """Every tool the server exposes, following ``nextCursor`` across pages.
+    """Every tool the server exposes, following ``next_cursor`` across pages.
 
     Inspecting only the first page would let a tool on page 2 change (or be poisoned)
     unseen. A repeated cursor or more than ``max_pages`` pages raises
@@ -145,7 +287,7 @@ async def list_all_tools(session: ClientSession, max_pages: int = MAX_TOOL_PAGES
         params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
         page = await session.list_tools(params=params)
         tools.extend(page.tools)
-        cursor = page.nextCursor
+        cursor = page.next_cursor
         if not cursor:
             return tools
         if cursor in seen:
@@ -156,7 +298,7 @@ async def list_all_tools(session: ClientSession, max_pages: int = MAX_TOOL_PAGES
 
 def _is_destructive(tool: Tool) -> bool:
     ann = tool.annotations
-    return bool(ann and ann.destructiveHint is True and ann.readOnlyHint is not True)
+    return bool(ann and ann.destructive_hint is True and ann.read_only_hint is not True)
 
 
 async def _probe_tools(
@@ -167,7 +309,7 @@ async def _probe_tools(
 
     Only tools listed in ``tools_to_test`` are ever called, one at a time: never a tool
     just because it exists or its name looks harmless. A tool counts as failed if the call
-    raises or returns ``isError``, or if the server no longer lists it (it is then not
+    raises or returns ``is_error``, or if the server no longer lists it (it is then not
     called at all). A tool whose annotations declare it destructive is skipped unless its
     probe sets ``allow_destructive``. Annotations are hints from the server, not
     guarantees: a malicious server can mislabel a destructive tool, so only probe tools you
@@ -194,9 +336,9 @@ async def _probe_tools(
             result = await session.call_tool(
                 probe.name,
                 arguments=probe.arguments,
-                read_timeout_seconds=timedelta(seconds=probe.timeout_seconds or timeout_s),
+                read_timeout_seconds=probe.timeout_seconds or timeout_s,
             )
-            if result.isError:
+            if getattr(result, "is_error", False):
                 failed += 1
                 notes.append(f"{probe.name}: tool returned an error result")
         except Exception as exc:  # unknown tool, bad args, transport error, timeout
@@ -277,24 +419,12 @@ def _format_exc(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def _find_http_error(exc: BaseException) -> httpx.HTTPStatusError | None:
-    """The HTTP status error buried in a (possibly nested) anyio ExceptionGroup, if any."""
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc
-    if isinstance(exc, BaseExceptionGroup):
-        for sub in exc.exceptions:
-            found = _find_http_error(sub)
-            if found is not None:
-                return found
-    return None
-
-
 def _has_auth_header(cfg: ServerConfig) -> bool:
     return any(k.lower() in ("authorization", "x-api-key") for k in cfg.headers)
 
 
 def _auth_outcome(
-    server_id: str, cfg: ServerConfig, err: httpx.HTTPStatusError, latency_ms: float
+    server_id: str, cfg: ServerConfig, log: HttpLog, latency_ms: float
 ) -> CheckOutcome:
     """Classify a 401/403 answer.
 
@@ -302,8 +432,8 @@ def _auth_outcome(
     hosted MCP servers use OAuth): that's **up**, flagged ``auth_required`` — we just can't
     see its tools. With credentials configured it means they were rejected: **down**.
     """
-    code = err.response.status_code
-    challenge = err.response.headers.get("www-authenticate", "")
+    code = log.status
+    challenge = log.headers.get("www-authenticate", "")
     if _has_auth_header(cfg):
         return CheckOutcome(
             CheckEvent(
@@ -394,24 +524,24 @@ def request_timeout_s(cfg: ServerConfig) -> float:
 
 
 def check_budget_s(cfg: ServerConfig) -> float:
-    """Upper bound for a whole check: connect + initialize + listing + every probe."""
+    """Upper bound for a whole check: connect + discover probe + initialize + listing +
+    every probe."""
     t = request_timeout_s(cfg)
     probes = sum((p.timeout_seconds or t) for p in cfg.tools_to_test)
-    return 3 * t + probes
+    return 3 * t + DISCOVER_PROBE_TIMEOUT_S + probes
 
 
 async def _run_check(server_id: str, cfg: ServerConfig) -> CheckOutcome:
     thresholds = cfg.thresholds
     timeout_s = request_timeout_s(cfg)
+    log = HttpLog()
     t0 = perf_counter()
 
     try:
-        async with _open_session(cfg, timeout_s) as session:
-            start = perf_counter()
-            init: InitializeResult = await session.initialize()
-            latency_ms = (perf_counter() - start) * 1000.0
-
-            spec_version = init.protocolVersion or None
+        async with _open_session(cfg, timeout_s, log) as session:
+            handshake = await negotiate(session, cfg.transport == TransportType.STDIO, log)
+            latency_ms = handshake.latency_ms
+            spec_version = handshake.protocol_version or None
             pagination_issue: str | None = None
             try:
                 tools: list[Tool] = await list_all_tools(session)
@@ -423,11 +553,11 @@ async def _run_check(server_id: str, cfg: ServerConfig) -> CheckOutcome:
             )
 
             # Version-aware validation: common rules always, version rules only if known.
-            issues = run_minimal_common_validation(init, tools)
+            issues = run_minimal_common_validation(handshake, tools)
             validator = get_validator(spec_version)
             if validator is not None:
                 spec_version_supported = True
-                issues = issues + validator.validate(init, tools)
+                issues = issues + validator.validate(handshake, tools)
             else:
                 spec_version_supported = False  # informational only; never changes status
             if pagination_issue:
@@ -455,12 +585,11 @@ async def _run_check(server_id: str, cfg: ServerConfig) -> CheckOutcome:
 
     except Exception as exc:  # connect failure, handshake failure, timeout, etc.
         raise_if_cancelling(exc)
-        http_err = _find_http_error(exc)
-        if http_err is not None and http_err.response.status_code in (401, 403):
-            return _auth_outcome(server_id, cfg, http_err, (perf_counter() - t0) * 1000.0)
-        if http_err is not None and http_err.response.status_code == 429:
+        if log.status in (401, 403):
+            return _auth_outcome(server_id, cfg, log, (perf_counter() - t0) * 1000.0)
+        if log.status == 429:
             # Alive, but throttling us: a problem worth seeing, not an outage.
-            retry = http_err.response.headers.get("retry-after")
+            retry = log.headers.get("retry-after")
             return CheckOutcome(
                 CheckEvent(
                     server_id=server_id,
@@ -476,6 +605,6 @@ async def _run_check(server_id: str, cfg: ServerConfig) -> CheckOutcome:
                 latency_ms=0.0,
                 spec_version=None,
                 spec_version_supported=False,
-                detail=f"connection/handshake failed: {_format_exc(exc)}",
+                detail=f"connection/handshake failed: {_format_exc(exc)}{log.describe()}",
             )
         )

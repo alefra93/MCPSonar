@@ -6,7 +6,7 @@ mutations reach the running scheduler.
 
 from __future__ import annotations
 
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from mcpsonar.dashboard import create_app
 from mcpsonar.scheduler import Scheduler

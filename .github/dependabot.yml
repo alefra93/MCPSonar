@@ -4,11 +4,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    # mcp 2.x is a breaking rewrite: evaluate it on purpose (see docs/product-roadmap.md),
-    # not through an automated bump.
+    # mcp upgrades are deliberate migrations with their own ADR (docs/adr/0001-mcp-sdk-2.md),
+    # never automated: a semver-major ignore does not stop Dependabot from widening the
+    # requirement range (it proposed "mcp>=1.28,<3" without any code change).
     ignore:
       - dependency-name: "mcp"
-        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

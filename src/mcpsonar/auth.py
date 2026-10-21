@@ -17,6 +17,11 @@ Self-contained, no extra dependencies:
   freshly started, publicly exposed instance first cannot claim it. Creation is atomic: of
   two concurrent setup requests, exactly one wins.
 * **Brute force**: repeated failed logins from one client address are throttled (429).
+* **API tokens** (for the CLI and automation): ``Authorization: Bearer mcps_…``. Stored as
+  SHA-256 only, shown once at creation, scoped ``read`` (GET/HEAD only) or ``write``,
+  optionally expiring, revocable. They are created and revoked only from a signed-in
+  dashboard session; a token can never mint or list tokens. Bearer requests carry no cookie,
+  so they are not exposed to CSRF.
 
 When ``require_auth`` is off (``--no-auth``, behind a trusted proxy / on localhost) the
 middleware is not installed and everything is open. ``/metrics`` stays outside the login so
@@ -93,6 +98,13 @@ def new_session_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+API_TOKEN_PREFIX = "mcps_"  # recognizable by secret scanners and in logs
+
+
+def new_api_token() -> str:
+    return API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+
+
 def token_digest(token: str) -> str:
     """What the database stores for a session token (never the token itself)."""
     return hashlib.sha256(token.encode()).hexdigest()
@@ -154,6 +166,15 @@ class _SetupRequest(_Credentials):
     setup_token: str | None = Field(default=None, max_length=256)
 
 
+class _TokenRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    scope: Literal["read", "write"] = "read"
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+_READ_METHODS = {"GET", "HEAD"}
+
+
 def _client_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
@@ -192,12 +213,33 @@ def register_auth(
         token = request.cookies.get(COOKIE_NAME)
         return await storage.get_session_user(token) if token else None
 
+    def _bearer(request: Request) -> str | None:
+        header = request.headers.get("authorization", "")
+        scheme, _, value = header.partition(" ")
+        return value.strip() if scheme.lower() == "bearer" and value.strip() else None
+
     if require_auth:
 
         @app.middleware("http")
         async def _auth_mw(request: Request, call_next):
             path = request.url.path
             if path in _PUBLIC_PATHS:
+                return await call_next(request)
+            bearer = _bearer(request)
+            if bearer is not None:
+                api_token = await storage.get_api_token(bearer)
+                if api_token is None:
+                    return JSONResponse({"detail": "invalid, expired or revoked API token"},
+                                        status_code=401)
+                if path.startswith("/api/tokens"):
+                    return JSONResponse(
+                        {"detail": "API tokens cannot manage tokens: use the dashboard"},
+                        status_code=403)
+                if api_token["scope"] == "read" and request.method not in _READ_METHODS:
+                    return JSONResponse({"detail": "this API token is read-only"},
+                                        status_code=403)
+                request.state.user = f"token:{api_token['name']}"
+                request.state.via_token = True
                 return await call_next(request)
             user = await _current_user(request)
             if user is None:
@@ -206,6 +248,33 @@ def register_auth(
                 return RedirectResponse("/login", status_code=302)
             request.state.user = user
             return await call_next(request)
+
+    def _session_only(request: Request) -> str:
+        if not require_auth:
+            raise HTTPException(400, "the login is disabled (--no-auth): the API needs no token")
+        user = getattr(request.state, "user", None)
+        if user is None or getattr(request.state, "via_token", False):
+            raise HTTPException(403, "sign in to the dashboard to manage API tokens")
+        return user
+
+    @app.get("/api/tokens")
+    async def list_tokens(request: Request):
+        _session_only(request)
+        return await storage.list_api_tokens()
+
+    @app.post("/api/tokens", status_code=201)
+    async def create_token(body: _TokenRequest, request: Request):
+        user = _session_only(request)
+        ttl = body.expires_in_days * 86400 if body.expires_in_days else None
+        meta, token = await storage.create_api_token(body.name.strip(), body.scope, user, ttl)
+        return {**meta, "token": token}  # the only time the token is ever returned
+
+    @app.delete("/api/tokens/{token_id}", status_code=204)
+    async def revoke_token(token_id: str, request: Request):
+        _session_only(request)
+        if not await storage.revoke_api_token(token_id):
+            raise HTTPException(404, "token not found")
+        return JSONResponse(status_code=204, content=None)
 
     @app.get("/api/auth/status")
     async def auth_status(request: Request):

@@ -1,10 +1,10 @@
-"""Adapter tests using httpx.MockTransport (no real network) + the /metrics route."""
+"""Adapter tests using httpx2.MockTransport (no real network) + the /metrics route."""
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from mcpsonar.adapters import render_metrics
 from mcpsonar.adapters.generic_webhook import GenericWebhookAdapter
@@ -32,11 +32,11 @@ def _event(status: CheckStatus, **kw) -> CheckEvent:
 async def test_kuma_degraded_maps_to_up_with_msg():
     seen: dict = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen["params"] = dict(request.url.params)
-        return httpx.Response(200, text="OK")
+        return httpx2.Response(200, text="OK")
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     adapter = UptimeKumaAdapter("http://kuma/api/push/tok", client)
     await adapter.send(_event(CheckStatus.DEGRADED, detail="slow"))
     await client.aclose()
@@ -49,11 +49,11 @@ async def test_kuma_degraded_maps_to_up_with_msg():
 async def test_kuma_down_maps_to_down():
     seen: dict = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen["params"] = dict(request.url.params)
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     await UptimeKumaAdapter("http://kuma/push", client).send(_event(CheckStatus.DOWN))
     await client.aclose()
     assert seen["params"]["status"] == "down"
@@ -63,12 +63,12 @@ async def test_kuma_down_maps_to_down():
 async def test_generic_skips_status_not_in_on():
     calls = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     adapter = GenericWebhookAdapter("http://hook", [CheckStatus.DOWN], client)
     await adapter.send(_event(CheckStatus.UP))  # UP not in on -> no request
     await client.aclose()
@@ -78,12 +78,12 @@ async def test_generic_skips_status_not_in_on():
 async def test_generic_retries_then_succeeds():
     attempts = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        return httpx.Response(500) if attempts < 3 else httpx.Response(200)
+        return httpx2.Response(500) if attempts < 3 else httpx2.Response(200)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     adapter = GenericWebhookAdapter(
         "http://hook", [CheckStatus.DOWN], client, max_retries=3, backoff=0.001
     )
@@ -95,16 +95,16 @@ async def test_generic_retries_then_succeeds():
 async def test_generic_raises_after_exhausting_retries():
     attempts = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        return httpx.Response(503)
+        return httpx2.Response(503)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     adapter = GenericWebhookAdapter(
         "http://hook", [CheckStatus.DOWN], client, max_retries=3, backoff=0.001
     )
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         await adapter.send(_event(CheckStatus.DOWN))
     await client.aclose()
     assert attempts == 3

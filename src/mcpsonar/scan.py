@@ -18,20 +18,14 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from time import perf_counter
 from typing import Any
 
-from .check_engine import (
-    _find_http_error,
-    _format_exc,
-    _open_session,
-    list_all_tools,
-    raise_if_cancelling,
-)
-from .lint import SEVERITY_ORDER, Finding, lint_tools
+from .lint import SEVERITY_ORDER, Finding
 from .models import ServerConfig, TransportType
-from .redact import redact_url, scrub, secret_values
-from .tooldefs import ToolChange, diff_tools, fingerprint, index_tools, normalize_tool
+from .output import Style as _Style
+from .redact import redact_url
+from .services import inspect_server
+from .tooldefs import ToolChange, diff_tools, fingerprint, renormalize
 
 LOCK_VERSION = 1
 
@@ -66,6 +60,18 @@ class ScanResult:
         }
 
 
+def split_command(command: str) -> list[str]:
+    r"""Split a command line into argv. On Windows ``shlex`` must run in non-POSIX mode (so
+    backslashes in paths survive), but that mode keeps the quotes *inside* the tokens:
+    strip one pair, so ``"C:\Program Files\nodejs\npx.cmd" -y pkg`` works."""
+    if os.name != "nt":
+        return shlex.split(command)
+    return [
+        t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'" else t
+        for t in shlex.split(command, posix=False)
+    ]
+
+
 def build_config(
     target: str | None,
     stdio: str | None,
@@ -75,7 +81,7 @@ def build_config(
 ) -> tuple[ServerConfig, str]:
     """Turn CLI arguments into a ServerConfig (+ a display label)."""
     if stdio:
-        argv = shlex.split(stdio, posix=os.name != "nt")
+        argv = split_command(stdio)
         env_map = dict(e.split("=", 1) for e in env)
         cfg = ServerConfig(transport=TransportType.STDIO, command=argv[0], args=argv[1:],
                            env=env_map)
@@ -93,32 +99,21 @@ def build_config(
 
 
 async def scan(cfg: ServerConfig, label: str, timeout_s: float = 20.0) -> ScanResult:
-    result = ScanResult(target=label)
-    try:
-        async with _open_session(cfg, timeout_s) as session:
-            start = perf_counter()
-            init = await session.initialize()
-            result.latency_ms = (perf_counter() - start) * 1000
-            result.spec_version = init.protocolVersion
-            if init.serverInfo:
-                result.server_name = init.serverInfo.name
-                result.server_version = init.serverInfo.version
-            tools = await list_all_tools(session)
-    except Exception as exc:
-        raise_if_cancelling(exc)
-        http_err = _find_http_error(exc)
-        if http_err is not None and http_err.response.status_code in (401, 403):
-            result.error = (
-                f"authentication required ({http_err.response.status_code}) — pass a token "
-                "with -H 'Authorization: Bearer <token>'"
-            )
-        else:
-            result.error = scrub(_format_exc(exc), secret_values(cfg))
-        return result
-    definitions = [normalize_tool(t) for t in tools]
-    result.tools = index_tools(definitions)
-    result.findings = lint_tools(definitions)
-    return result
+    """One-shot inspection (the same service the dashboard's "Tools" view uses)."""
+    found = await inspect_server(cfg, label, timeout_s)
+    error = found.error
+    if found.auth_required:
+        error = f"{error} — pass a token with -H 'Authorization: Bearer <token>'"
+    return ScanResult(
+        target=label,
+        server_name=found.server_name,
+        server_version=found.server_version,
+        spec_version=found.spec_version,
+        latency_ms=found.latency_ms,
+        tools=found.tools,
+        findings=found.findings,
+        error=error,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -142,27 +137,14 @@ def read_lock(path: Path) -> dict[str, dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("mcpsonar_lock") != LOCK_VERSION:
         raise SystemExit(f"{path}: not an mcpsonar lockfile (or unsupported version)")
-    return {name: entry["definition"] for name, entry in data["tools"].items()}
+    # Re-normalized like a fresh listing, so a lockfile written under another SDK version
+    # does not report drift for differences the SDK no longer represents.
+    return {name: renormalize(entry["definition"]) for name, entry in data["tools"].items()}
 
 
 # --------------------------------------------------------------------------- #
 # Output
 # --------------------------------------------------------------------------- #
-class _Style:
-    def __init__(self, enabled: bool) -> None:
-        self.on = enabled
-
-    def __call__(self, text: str, code: str) -> str:
-        return f"\033[{code}m{text}\033[0m" if self.on else text
-
-    def bold(self, t: str) -> str: return self(t, "1")
-    def dim(self, t: str) -> str: return self(t, "2")
-    def red(self, t: str) -> str: return self(t, "31")
-    def green(self, t: str) -> str: return self(t, "32")
-    def yellow(self, t: str) -> str: return self(t, "33")
-    def cyan(self, t: str) -> str: return self(t, "36")
-
-
 def render(result: ScanResult, fail_on: str, color: bool) -> str:
     s = _Style(color)
     sev_color = {"high": s.red, "medium": s.yellow, "low": s.dim}
@@ -237,7 +219,7 @@ async def run_scan(args: Any) -> int:
         else:
             write_lock(lock, result)
             result.lock_written = str(lock)
-    if args.json:
+    if args.json or getattr(args, "format", "text") == "json":
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
     else:
         color = sys.stdout.isatty() and "NO_COLOR" not in os.environ

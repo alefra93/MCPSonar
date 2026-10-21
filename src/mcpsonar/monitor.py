@@ -20,7 +20,7 @@ from .check_engine import run_check
 from .lint import lint_tools, risk_count
 from .models import Anomaly, CheckEvent, CheckStatus, ServerConfig
 from .storage import Storage
-from .tooldefs import diff_tools, index_tools
+from .tooldefs import diff_tools, index_tools, renormalize
 
 
 async def process_check(storage: Storage, server_id: str, cfg: ServerConfig) -> CheckEvent:
@@ -49,12 +49,15 @@ async def _track_tool_changes(
     storage: Storage, server_id: str, tools: list[dict]
 ) -> list[Anomaly]:
     current = index_tools(tools)
-    previous = await storage.get_tool_snapshot(server_id)
-    if previous is None:  # first successful listing: pin it as the baseline, silently
+    stored = await storage.get_tool_snapshot(server_id)
+    if stored is None:  # first successful listing: pin it as the baseline, silently
         await storage.save_tool_snapshot(server_id, current)
         return []
+    previous = {name: renormalize(d) for name, d in stored.items()}
     changes = diff_tools(previous, current)
     if not changes:
+        if previous != stored:  # only the stored form changed (SDK upgrade): re-pin quietly
+            await storage.save_tool_snapshot(server_id, current)
         return []
     await storage.add_tool_changes(server_id, changes)
     await storage.save_tool_snapshot(server_id, current)

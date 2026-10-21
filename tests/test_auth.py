@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from mcpsonar.auth import (
     COOKIE_NAME,
@@ -120,6 +120,10 @@ async def test_session_tokens_are_stored_hashed_and_forged_tokens_rejected():
         cur = await storage._conn.execute("SELECT token_hash FROM sessions")
         stored = [r[0] for r in await cur.fetchall()]
         assert stored == [token_digest(token)] and token not in stored
+        # Send ONLY the forged cookie: httpx2 >= 2.16 adds a cookie set without a domain
+        # next to the server-set one instead of replacing it, and a request carrying the
+        # valid session too is (correctly) authenticated.
+        client.cookies.clear()
         client.cookies.set(COOKIE_NAME, "forged-" + token)
         assert (await client.get("/api/servers")).status_code == 401
     finally:

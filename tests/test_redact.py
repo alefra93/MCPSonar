@@ -7,9 +7,9 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import httpx
+import httpx2
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from mcpsonar.check_engine import run_check
 from mcpsonar.dashboard import create_app
@@ -212,10 +212,10 @@ async def test_failed_webhook_log_does_not_leak_token(caplog):
     storage = await Storage.open(":memory:")
     try:
         def handler(request):
-            return httpx.Response(500)
+            return httpx2.Response(500)
 
         scheduler = Scheduler(storage, StateStore())
-        scheduler._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        scheduler._client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
         server = await storage.create_server(
             "S", _cfg(webhooks=[{"type": "uptime_kuma",
                                  "push_url": f"https://kuma.lan/api/push/{KUMA_TOKEN}"}])
@@ -223,7 +223,7 @@ async def test_failed_webhook_log_does_not_leak_token(caplog):
         from mcpsonar.adapters import build_push_adapters
 
         adapters = build_push_adapters(server, scheduler._client)
-        with caplog.at_level(logging.DEBUG, logger="mcpsonar"):  # cli.py keeps httpx at WARNING
+        with caplog.at_level(logging.DEBUG, logger="mcpsonar"):  # cli.py keeps httpx2 at WARNING
             await scheduler._emit(server.id, CheckEvent(server_id=server.id, status="down",
                                                         latency_ms=0), adapters,
                                   secret_values(server))

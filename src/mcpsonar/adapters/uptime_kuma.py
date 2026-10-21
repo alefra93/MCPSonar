@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-import httpx
+import httpx2
 
 from ..models import CheckEvent, CheckStatus
 from .base import BaseAdapter
@@ -20,7 +20,7 @@ logger = logging.getLogger("mcpsonar.adapters.uptime_kuma")
 class UptimeKumaAdapter(BaseAdapter):
     name = "uptime_kuma"
 
-    def __init__(self, push_url: str, client: httpx.AsyncClient) -> None:
+    def __init__(self, push_url: str, client: httpx2.AsyncClient) -> None:
         super().__init__(client)
         self._push_url = push_url
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import httpx
+import httpx2
 
 from ..models import CheckEvent, CheckStatus
 from ..redact import redact_url, scrub
@@ -28,7 +28,7 @@ class GenericWebhookAdapter(BaseAdapter):
         self,
         url: str,
         on: list[CheckStatus],
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         max_retries: int = 3,
         backoff: float = 0.5,
         on_anomaly: bool = True,
