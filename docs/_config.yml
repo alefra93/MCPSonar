@@ -20,3 +20,7 @@ github:
 # banner.html is the source of the README banner image, not a page.
 exclude:
   - banner.html
+# Google Search Console ownership check (a public token, not a secret); jekyll-seo-tag
+# renders it as <meta name="google-site-verification">.
+webmaster_verifications:
+  google: ZXVT4FHcDY--mj6Sevsy86k1m2L9PToHK38pa5Pk-6k
