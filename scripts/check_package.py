@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FORBIDDEN = re.compile(r"(^|/)(__pycache__|\.venv|\.claude|\.pytest_cache|\.ruff_cache)(/|$)"
                        r"|\.pyc$|\.db$|(^|/)config\.yaml$")
-RELATIVE_LINK = re.compile(r"\]\((?!https?://|#|mailto:)[^)\s]+\)|src=\"(?!https?://)[^\"]+\"")
+RELATIVE_LINK = re.compile(r"\]\((?!https?://|#|mailto:)[^)\s]+\)|(?:src|href)=\"(?!https?://|#|mailto:)[^\"]+\"")
 REQUIRED_URLS = {"Homepage", "Repository", "Changelog", "Issues"}
 
 

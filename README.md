@@ -5,9 +5,9 @@
 <p align="center">
   <a href="https://github.com/alefra93/MCPSonar/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/alefra93/MCPSonar/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
-  <img alt="MCP spec 2024-11-05 → 2025-11-25" src="https://img.shields.io/badge/MCP%20spec-2024--11--05%20%E2%86%92%202025--11--25-2dd4bf">
+  <img alt="MCP spec 2024-11-05 → 2026-07-28" src="https://img.shields.io/badge/MCP%20spec-2024--11--05%20%E2%86%92%202026--07--28-2dd4bf">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-SQLite%20%C2%B7%20no%20cloud-0f766e">
-  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <a href="https://github.com/alefra93/MCPSonar/blob/main/LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
 <p align="center">

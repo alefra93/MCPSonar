@@ -20,6 +20,6 @@ def test_one_version_everywhere():
 def test_readme_has_no_relative_links():
     # PyPI renders the README without the repository around it: relative links break there.
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    relative = re.findall(r"\]\((?!https?://|#|mailto:)[^)\s]+\)|src=\"(?!https?://)[^\"]+\"",
+    relative = re.findall(r"\]\((?!https?://|#|mailto:)[^)\s]+\)|(?:src|href)=\"(?!https?://|#|mailto:)[^\"]+\"",
                           readme)
     assert relative == []
