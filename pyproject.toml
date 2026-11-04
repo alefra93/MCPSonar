@@ -44,7 +44,7 @@ dependencies = [
 # ruff is pinned exactly: its default rule set grows between releases, and CI must lint
 # with the same rules as a contributor's machine.
 # cryptography: only the tests use it, to make a TLS certificate for a local SMTP server.
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-timeout>=2.3", "ruff==0.17.1",
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-timeout>=2.3", "ruff==0.17.3",
        "cryptography>=42"]
 
 [project.scripts]
