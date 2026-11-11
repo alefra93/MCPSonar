@@ -2,7 +2,7 @@
 # Build:  docker build -t mcpsonar .
 # Run:    docker run --rm -p 8675:8675 -v mcpsonar-data:/data mcpsonar
 #         then open the setup link printed in `docker logs` (one-time setup token).
-FROM python:3.13-slim
+FROM python:3.15-slim
 
 # No .pyc files, unbuffered logs (so container logs stream immediately).
 ENV PYTHONDONTWRITEBYTECODE=1 \
